@@ -21,7 +21,8 @@ class Game:
         self.load_assets()
         
         self.levels = [
-            ("C:/Users/Lenovo/Documents/GitHub/ProjectGameGIGA/src/levels/level_1_normal.txt", "C:/Users/Lenovo/Documents/GitHub/ProjectGameGIGA/src/levels/level_1_gema.txt")
+            ("C:/Users/Lenovo/Documents/GitHub/ProjectGameGIGA/src/levels/level_1_normal.txt", "C:/Users/Lenovo/Documents/GitHub/ProjectGameGIGA/src/levels/level_1_gema.txt"),
+            ("C:/Users/Lenovo/Documents/GitHub/ProjectGameGIGA/src/levels/level_2_normal.txt", "C:/Users/Lenovo/Documents/GitHub/ProjectGameGIGA/src/levels/level_2_gema.txt")
         ]
         self.current_level_index = 0
         
@@ -87,17 +88,17 @@ class Game:
                         world_x, world_y = x * tile_size, y * tile_size
                         rect = pygame.Rect(world_x, world_y, tile_size, tile_size)
 
-                        if char == 'G':
+                        if char in 'Gg':
                             self.platforms.append({'rect': rect, 'dim': 'both', 'char': 'G'})
-                        elif char == 'P':
+                        elif char in 'Pp':
                             self.platforms.append({'rect': rect, 'dim': 'normal', 'char': 'P'})
-                        elif char == 't':
+                        elif char in 'Tt':
                             triggers_pos['normal'].append(rect)
                         elif char in 'jJ':
                             trap_zones_pos['normal'].append(rect)
-                        elif char == 'S':
+                        elif char in 'Ss':
                             self.start_pos = (world_x, world_y + tile_size)
-                        elif char == 'D':
+                        elif char in 'Dd':
                             self.door_rect = pygame.Rect(world_x, world_y, tile_size, tile_size * 1)
         except FileNotFoundError:
             print(f"Error: File '{normal_map_file}' tidak ditemukan!")
@@ -110,9 +111,9 @@ class Game:
                         world_x, world_y = x * tile_size, y * tile_size
                         rect = pygame.Rect(world_x, world_y, tile_size, tile_size)
                         
-                        if char in 'GP':
+                        if char in 'GPp':
                            self.platforms.append({'rect': rect, 'dim': 'gema', 'char': 'P'})
-                        elif char == 't':
+                        elif char in 'Tt':
                             triggers_pos['gema'].append(rect)
                         elif char in 'jJ':
                             trap_zones_pos['gema'].append(rect)
