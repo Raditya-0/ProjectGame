@@ -8,7 +8,6 @@ class Game:
     def __init__(self):
         pygame.init()
         pygame.mixer.init()
-        # self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.FULLSCREEN)
         self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
         self.game_surface_width = SCREEN_WIDTH // CAMERA_ZOOM_DIVIDER
         self.game_surface_height = SCREEN_HEIGHT // CAMERA_ZOOM_DIVIDER
@@ -18,6 +17,7 @@ class Game:
         self.running = True
         self.font = pygame.font.Font(None, 40)
         self.game_state = 'main_menu'
+        self.prev_game_state = 'main_menu'
         
         self.spike_animation_frames = []
         self.parallax_layers = []
@@ -34,6 +34,9 @@ class Game:
         self.death_delay_timer = 0
         self.death_delay_start_time = 0
         self.is_in_death_delay = False
+
+        self.is_music_paused = False
+        self.is_settings_open = False
 
     def load_assets(self):
         self.heart_icon = assets.create_heart_surface()
@@ -60,7 +63,6 @@ class Game:
             print(f"Error saat memuat animasi duri: {e}")
             self.running = False
 
-
         self.forest_layers_images = []
         try:
             for i in range(10):
@@ -79,6 +81,16 @@ class Game:
             print(f"Error saat memuat gambar bulan: {e}")
             self.running = False
 
+        self.campfire_animation_frames = []
+        try:
+            for i in range(1, 8):
+                path = f"C:/Users/Lenovo/Documents/GitHub/ProjectGameGIGA/Assets/Background/Campfire/campFire{i}.png"
+                image = pygame.image.load(path).convert_alpha()
+                self.campfire_animation_frames.append(image)
+        except pygame.error as e:
+            print(f"Error saat memuat animasi api unggun: {e}")
+            self.running = False
+
 
     def setup_level(self, normal_map_file, gema_map_file, new_game=False):
         if new_game:
@@ -86,6 +98,7 @@ class Game:
             self.traps = []
             self.trigger_traps = []
             self.door_rect = None
+            self.campfires = []
 
         tile_size = 40
 
@@ -128,6 +141,11 @@ class Game:
                             triggers_pos['gema'].append(rect)
                         elif char in 'jJ':
                             trap_zones_pos['gema'].append(rect)
+                        elif char in 'Cc': 
+                            self.campfires.append({
+                                'rect': rect,
+                                'frame_index': 0.0,
+                            })
         except FileNotFoundError:
             print(f"Error: File '{gema_map_file}' tidak ditemukan!")
             self.running = False; return
@@ -167,7 +185,6 @@ class Game:
             self.parallax_layers = []
             speeds = [0.55, 0.5, 0.45, 0.4, 0.35, 0.3, 0.25, 0.2, 0.15, 0.1]
 
-            # Layer background hutan
             for i in range(len(self.forest_layers_images)):
                 if i < len(speeds):
                     layer = ParallaxLayer(self.forest_layers_images[i], speeds[i])
@@ -193,6 +210,25 @@ class Game:
                 if trap['frame_index'] >= len(self.spike_animation_frames):
                     trap['animation_finished'] = True
                     trap['frame_index'] = len(self.spike_animation_frames) - 1
+
+    def update_campfires(self):
+        CAMPFIRE_ANIMATION_SPEED = 0.15
+        for campfire in self.campfires:
+            campfire['frame_index'] += CAMPFIRE_ANIMATION_SPEED
+            if campfire['frame_index'] >= len(self.campfire_animation_frames):
+                campfire['frame_index'] = 0.0
+
+    def draw_campfires(self, offset_x, offset_y):
+        vertical_offset = 10
+        
+        for campfire in self.campfires:
+            current_frame_index = int(campfire['frame_index'])
+            if 0 <= current_frame_index < len(self.campfire_animation_frames):
+                image_to_draw = self.campfire_animation_frames[current_frame_index]
+                
+                scaled_image = pygame.transform.scale(image_to_draw, (campfire['rect'].width, campfire['rect'].height))
+                
+                self.game_surface.blit(scaled_image, (campfire['rect'].x - offset_x, campfire['rect'].y - offset_y + vertical_offset))
 
     def respawn_player(self):
         self.player.respawn(self.start_pos)
@@ -256,7 +292,6 @@ class Game:
             self.go_to_next_level()
 
     def draw_text(self, text, size, color, x, y, center_aligned=True, shadow_color=None, shadow_offset=3):
-        """Fungsi helper untuk menggambar teks, sekarang dengan efek bayangan."""
         font = pygame.font.Font(None, size)
         
         text_surface = font.render(text, True, color)
@@ -277,6 +312,54 @@ class Game:
             text_rect.topleft = (x, y)
         self.screen.blit(text_surface, text_rect)
 
+    def draw_pause_menu(self):
+        # Semi-transparent overlay, now using the full screen dimensions
+        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 150))
+        self.screen.blit(overlay, (0, 0))
+
+        self.draw_text("Paused", 80, (255, 255, 255), SCREEN_WIDTH / 2, SCREEN_HEIGHT / 4, shadow_color=(20, 20, 20))
+        
+        # Buttons
+        self.resume_button = pygame.Rect(SCREEN_WIDTH / 2 - 100, SCREEN_HEIGHT / 2 - 75, 200, 50)
+        self.restart_button = pygame.Rect(SCREEN_WIDTH / 2 - 100, SCREEN_HEIGHT / 2, 200, 50)
+        self.settings_button = pygame.Rect(SCREEN_WIDTH / 2 - 100, SCREEN_HEIGHT / 2 + 75, 200, 50)
+        self.main_menu_button = pygame.Rect(SCREEN_WIDTH / 2 - 100, SCREEN_HEIGHT / 2 + 150, 200, 50)
+        
+        # Draw buttons
+        buttons = [
+            (self.resume_button, "Lanjutkan"),
+            (self.restart_button, "Ulangi"),
+            (self.settings_button, "Pengaturan"),
+            (self.main_menu_button, "Menu Utama")
+        ]
+        mouse_pos = pygame.mouse.get_pos()
+        for rect, text in buttons:
+            color = (150, 150, 150) if rect.collidepoint(mouse_pos) else (100, 100, 100)
+            pygame.draw.rect(self.screen, color, rect, border_radius=10)
+            self.draw_text(text, 32, (255, 255, 255), rect.centerx, rect.centery)
+
+    def draw_settings_menu(self):
+        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 150))
+        self.screen.blit(overlay, (0, 0))
+
+        self.draw_text("Pengaturan", 60, (255, 255, 255), SCREEN_WIDTH / 2, SCREEN_HEIGHT / 4, shadow_color=(20, 20, 20))
+        
+        self.music_button = pygame.Rect(SCREEN_WIDTH / 2 - 100, SCREEN_HEIGHT / 2, 200, 50)
+        self.back_button = pygame.Rect(SCREEN_WIDTH / 2 - 100, SCREEN_HEIGHT / 2 + 75, 200, 50)
+
+        music_text = "Musik: Off" if self.is_music_paused else "Musik: On"
+        
+        mouse_pos = pygame.mouse.get_pos()
+        music_color = (150, 150, 150) if self.music_button.collidepoint(mouse_pos) else (100, 100, 100)
+        pygame.draw.rect(self.screen, music_color, self.music_button, border_radius=10)
+        self.draw_text(music_text, 32, (255, 255, 255), self.music_button.centerx, self.music_button.centery)
+
+        back_color = (150, 150, 150) if self.back_button.collidepoint(mouse_pos) else (100, 100, 100)
+        pygame.draw.rect(self.screen, back_color, self.back_button, border_radius=10)
+        self.draw_text("Kembali", 32, (255, 255, 255), self.back_button.centerx, self.back_button.centery)
+
     def run(self):
         level_pair = self.levels[self.current_level_index]
         self.setup_level(level_pair[0], level_pair[1], new_game=True)
@@ -290,8 +373,11 @@ class Game:
         start_button_rect = pygame.Rect(SCREEN_WIDTH / 2 - 100, SCREEN_HEIGHT / 2, 200, 50)
         exit_button_rect = pygame.Rect(SCREEN_WIDTH / 2 - 100, SCREEN_HEIGHT / 2 + 75, 200, 50)
         
+        pause_button_rect = pygame.Rect(SCREEN_WIDTH - 50, 10, 40, 40)
+
         while self.running:
             mouse_pos = pygame.mouse.get_pos()
+            self.update_campfires()
 
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
@@ -299,17 +385,51 @@ class Game:
                 if event.type == pygame.KEYDOWN:
                     if event.key == pygame.K_ESCAPE:
                         self.running = False
+                    if event.key == pygame.K_p and self.game_state == 'playing':
+                        self.prev_game_state = self.game_state
+                        self.game_state = 'paused'
+                    elif event.key == pygame.K_p and self.game_state == 'paused':
+                        self.game_state = 'playing'
+
                     if self.game_state == 'playing':
                         if event.key in [pygame.K_SPACE, pygame.K_UP, pygame.K_w]:
                             self.player.jump()
                         if event.key in [pygame.K_LSHIFT, pygame.K_RSHIFT]:
                             self.player.shift_dimension()
                 
-                if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 and self.game_state == 'main_menu':
-                    if start_button_rect.collidepoint(mouse_pos):
-                        self.game_state = 'playing'
-                    if exit_button_rect.collidepoint(mouse_pos):
-                        self.running = False
+                if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                    if self.game_state == 'main_menu':
+                        if start_button_rect.collidepoint(mouse_pos):
+                            self.game_state = 'playing'
+                        if exit_button_rect.collidepoint(mouse_pos):
+                            self.running = False
+                    elif self.game_state == 'playing':
+                        if pause_button_rect.collidepoint(mouse_pos):
+                            self.prev_game_state = self.game_state
+                            self.game_state = 'paused'
+                    elif self.game_state == 'paused':
+                        if self.is_settings_open:
+                            if self.music_button.collidepoint(mouse_pos):
+                                if self.is_music_paused:
+                                    pygame.mixer.music.unpause()
+                                else:
+                                    pygame.mixer.music.pause()
+                                self.is_music_paused = not self.is_music_paused
+                            if self.back_button.collidepoint(mouse_pos):
+                                self.is_settings_open = False
+                        else:
+                            if self.resume_button.collidepoint(mouse_pos):
+                                self.game_state = 'playing'
+                            if self.restart_button.collidepoint(mouse_pos):
+                                self.respawn_player()
+                                self.game_state = 'playing'
+                            if self.settings_button.collidepoint(mouse_pos):
+                                self.is_settings_open = True
+                            if self.main_menu_button.collidepoint(mouse_pos):
+                                self.current_level_index = 0
+                                level_pair = self.levels[self.current_level_index]
+                                self.setup_level(level_pair[0], level_pair[1], new_game=True)
+                                self.game_state = 'main_menu'
 
             if self.game_state == 'playing':
                 if self.spawn_invincibility_timer > 0:
@@ -336,8 +456,12 @@ class Game:
                         self.current_level_index = 0
                         level_pair = self.levels[self.current_level_index]
                         self.setup_level(level_pair[0], level_pair[1], new_game=True)
+                        self.player.hearts = PLAYER_START_HEARTS
                 
                 self.update_animated_traps()
+                
+            elif self.game_state == 'paused':
+                pass 
 
             camera_offset_x = self.player.rect.centerx - self.game_surface_width / 2
             camera_offset_y = CAMERA_MANUAL_OFFSET_Y
@@ -357,8 +481,6 @@ class Game:
                 self.moon_shadow_object.draw(self.game_surface, camera_offset_x)
                 self.moon_object.draw(self.game_surface, camera_offset_x)
 
-
-
             for p in self.platforms:
                 if p['dim'] in [current_dimension_str, 'both']:
                     tile_image = self.tile_images.get(p.get('char'))
@@ -376,6 +498,8 @@ class Game:
                     
                     self.game_surface.blit(scaled_image, (trap['trap_rect'].x - final_offset_x, draw_y - final_offset_y))
 
+            self.draw_campfires(final_offset_x, final_offset_y)
+
             if self.door_rect:
                 door_surf = assets.create_door_surface(self.door_rect.width, self.door_rect.height)
                 self.game_surface.blit(door_surf, (self.door_rect.x - final_offset_x, self.door_rect.y - final_offset_y))
@@ -384,8 +508,17 @@ class Game:
             
             self.screen.blit(pygame.transform.scale(self.game_surface, self.screen.get_size()), (0, 0))
 
-            if self.game_state == 'main_menu':
+            if self.game_state == 'playing' or self.game_state == 'paused':
+                for i in range(self.player.hearts):
+                    self.screen.blit(self.heart_icon, (10 + i * 35, 10))
                 
+                pygame.draw.circle(self.screen, (100, 100, 100), pause_button_rect.center, 20)
+                if pause_button_rect.collidepoint(mouse_pos):
+                    pygame.draw.circle(self.screen, (150, 150, 150), pause_button_rect.center, 20)
+                
+                self.draw_text("||", 32, (255, 255, 255), pause_button_rect.centerx, pause_button_rect.centery, shadow_color=None)
+            
+            if self.game_state == 'main_menu':
                 self.draw_text("Dimensi Jebakan", 80, (255, 255, 255), SCREEN_WIDTH / 2, SCREEN_HEIGHT / 4, shadow_color=(20, 20, 20))
                 
                 start_color = (150, 150, 150) if start_button_rect.collidepoint(mouse_pos) else (100, 100, 100)
@@ -396,10 +529,12 @@ class Game:
                 pygame.draw.rect(self.screen, exit_color, exit_button_rect, border_radius=10)
                 self.draw_text("Keluar", 32, (255, 255, 255), exit_button_rect.centerx, exit_button_rect.centery)
 
-            elif self.game_state == 'playing':
-                for i in range(self.player.hearts):
-                    self.screen.blit(self.heart_icon, (10 + i * 35, 10))
-
+            elif self.game_state == 'paused':
+                if self.is_settings_open:
+                    self.draw_settings_menu()
+                else:
+                    self.draw_pause_menu()
+            
             pygame.display.flip()
             self.clock.tick(FPS)
             
@@ -408,5 +543,3 @@ class Game:
 if __name__ == '__main__':
     game = Game()
     game.run()
-
-

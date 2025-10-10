@@ -1,3 +1,4 @@
+import os
 import pygame
 from settings import *
 
@@ -76,18 +77,24 @@ class Player:
             print(f"Error memuat fall sheet: {e}")
             self.animations['fall'].append(pygame.Surface((30, 40)))
 
+        frame_count = 10
+        asset_folder = 'C:\\Users\\Lenovo\\Documents\\GitHub\\ProjectGameGIGA\\Assets\\Player\\Death' 
+        self.animations['death'] = [] 
+
         try:
-            death_sheet = pygame.image.load('C:\\Users\\Lenovo\\Documents\\GitHub\\ProjectGameGIGA\\Assets\\Player\\_Death.png').convert_alpha() 
-            frame_width, frame_height, frame_count = 38, 40, 5
-            left_margin, gap_width, top_margin = 36, 75, 40
-            for i in range(frame_count):
-                x_pos = left_margin + i * (frame_width + gap_width)
-                frame_surface = pygame.Surface((frame_width, frame_height), pygame.SRCALPHA)
-                frame_surface.blit(death_sheet, (0, 0), (x_pos, top_margin, frame_width, frame_height))
+            for i in range(1, frame_count + 1):
+                file_name = f'_Death{i}.png'
+                full_path = os.path.join(asset_folder, file_name)
+
+                # Load the image and convert it for better performance
+                frame_surface = pygame.image.load(full_path).convert_alpha()
                 self.animations['death'].append(frame_surface)
+
+            print("Death animation loaded successfully.")
+
         except Exception as e:
-            print(f"Error memuat death sheet: {e}")
-            self.animations['death'].append(pygame.Surface((30, 40)))
+            print(f"Error loading death animation: {e}")
+            self.animations['death'].append(pygame.Surface((30, 40), pygame.SRCALPHA))
 
     def _get_input(self):
         if not self.is_alive: return
