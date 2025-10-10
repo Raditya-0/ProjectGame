@@ -2,13 +2,14 @@ import pygame
 from settings import *
 import assets
 from player import Player
-from parallax import ParallaxLayer
+from parallax import ParallaxLayer, ParallaxObject
 
 class Game:
     def __init__(self):
         pygame.init()
         pygame.mixer.init()
-        self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.FULLSCREEN)
+        # self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.FULLSCREEN)
+        self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
         self.game_surface_width = SCREEN_WIDTH // CAMERA_ZOOM_DIVIDER
         self.game_surface_height = SCREEN_HEIGHT // CAMERA_ZOOM_DIVIDER
         self.game_surface = pygame.Surface((self.game_surface_width, self.game_surface_height))
@@ -16,6 +17,7 @@ class Game:
         self.clock = pygame.time.Clock()
         self.running = True
         self.font = pygame.font.Font(None, 40)
+        self.game_state = 'main_menu'
         
         self.spike_animation_frames = []
         self.parallax_layers = []
@@ -69,6 +71,14 @@ class Game:
         except pygame.error as e:
             print(f"Error saat memuat gambar background hutan: {e}")
             self.running = False
+
+        try:
+            self.moon_image = pygame.image.load("C:/Users/Lenovo/Documents/GitHub/ProjectGameGIGA/Assets/Background/moon.png").convert_alpha()
+            self.moon_shadow_image = pygame.image.load("C:/Users/Lenovo/Documents/GitHub/ProjectGameGIGA/Assets/Background/moon_shadow.png").convert_alpha()
+        except pygame.error as e:
+            print(f"Error saat memuat gambar bulan: {e}")
+            self.running = False
+
 
     def setup_level(self, normal_map_file, gema_map_file, new_game=False):
         if new_game:
@@ -152,7 +162,20 @@ class Game:
                 if i < len(speeds):
                     layer = ParallaxLayer(self.forest_layers_images[i], speeds[i])
                     self.parallax_layers.append(layer)
-        
+
+        if new_game:
+            self.parallax_layers = []
+            speeds = [0.55, 0.5, 0.45, 0.4, 0.35, 0.3, 0.25, 0.2, 0.15, 0.1]
+
+            # Layer background hutan
+            for i in range(len(self.forest_layers_images)):
+                if i < len(speeds):
+                    layer = ParallaxLayer(self.forest_layers_images[i], speeds[i])
+                    self.parallax_layers.append(layer)
+
+            self.moon_object = ParallaxObject(self.moon_image, 0.045, 50, x_offset=150)
+            self.moon_shadow_object = ParallaxObject(self.moon_shadow_image, 0.05, 60, x_offset=160)
+
         self.spawn_invincibility_timer = self.spawn_invincibility_duration
 
     def handle_triggers(self):
@@ -232,53 +255,89 @@ class Game:
         if self.player.is_alive and self.door_rect and self.door_rect.contains(self.player.rect):
             self.go_to_next_level()
 
+    def draw_text(self, text, size, color, x, y, center_aligned=True, shadow_color=None, shadow_offset=3):
+        """Fungsi helper untuk menggambar teks, sekarang dengan efek bayangan."""
+        font = pygame.font.Font(None, size)
+        
+        text_surface = font.render(text, True, color)
+        text_rect = text_surface.get_rect()
+
+        if shadow_color:
+            shadow_surface = font.render(text, True, shadow_color)
+            shadow_rect = shadow_surface.get_rect()
+            if center_aligned:
+                shadow_rect.center = (x + shadow_offset, y + shadow_offset)
+            else:
+                shadow_rect.topleft = (x + shadow_offset, y + shadow_offset)
+            self.screen.blit(shadow_surface, shadow_rect)
+        
+        if center_aligned:
+            text_rect.center = (x, y)
+        else:
+            text_rect.topleft = (x, y)
+        self.screen.blit(text_surface, text_rect)
+
     def run(self):
         level_pair = self.levels[self.current_level_index]
         self.setup_level(level_pair[0], level_pair[1], new_game=True)
 
         try:
-            pygame.mixer.music.load('C:/Users/Lenovo/Documents/GitHub/ProjectGameGIGA/Assets/Sound/music_platformer.ogg')
+            pygame.mixer.music.load('C:\\Users\\Lenovo\\Documents\\GitHub\\ProjectGameGIGA\\Assets\\Sound\\music_platformer.ogg')
             pygame.mixer.music.play(-1) 
         except pygame.error as e:
             print(f"Tidak bisa memuat file musik: {e}")
         
+        start_button_rect = pygame.Rect(SCREEN_WIDTH / 2 - 100, SCREEN_HEIGHT / 2, 200, 50)
+        exit_button_rect = pygame.Rect(SCREEN_WIDTH / 2 - 100, SCREEN_HEIGHT / 2 + 75, 200, 50)
+        
         while self.running:
+            mouse_pos = pygame.mouse.get_pos()
+
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     self.running = False
                 if event.type == pygame.KEYDOWN:
-                    if event.key in [pygame.K_SPACE, pygame.K_UP, pygame.K_w]:
-                        self.player.jump()
-                    if event.key in [pygame.K_LSHIFT, pygame.K_RSHIFT]:
-                        self.player.shift_dimension()
-
-            if self.spawn_invincibility_timer > 0:
-                self.spawn_invincibility_timer -= 1
-
-            current_dimension_str = 'gema' if self.player.in_gema_dimension else 'normal'
-            active_platforms = [p['rect'] for p in self.platforms if p['dim'] in [current_dimension_str, 'both']]
-            
-            self.player.update(active_platforms)
-            
-            if self.player.is_alive:
-                self.handle_triggers()
-                self.handle_damage()
-                self.check_level_completion()
-            else: 
-                if self.is_in_death_delay:
-                    is_ready_for_delay = (self.player.state == 'death' and self.player.animation_finished) or (self.player.state != 'death')
-                    if is_ready_for_delay:
-                        current_time = pygame.time.get_ticks()
-                        if current_time - self.death_delay_start_time > self.death_delay_timer:
-                            self.respawn_player()
+                    if event.key == pygame.K_ESCAPE:
+                        self.running = False
+                    if self.game_state == 'playing':
+                        if event.key in [pygame.K_SPACE, pygame.K_UP, pygame.K_w]:
+                            self.player.jump()
+                        if event.key in [pygame.K_LSHIFT, pygame.K_RSHIFT]:
+                            self.player.shift_dimension()
                 
-                elif self.player.hearts <= 0:
-                    print("Game Over! Kembali ke Level 1...")
-                    self.current_level_index = 0
-                    level_pair = self.levels[self.current_level_index]
-                    self.setup_level(level_pair[0], level_pair[1], new_game=True)
-            
-            self.update_animated_traps()
+                if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 and self.game_state == 'main_menu':
+                    if start_button_rect.collidepoint(mouse_pos):
+                        self.game_state = 'playing'
+                    if exit_button_rect.collidepoint(mouse_pos):
+                        self.running = False
+
+            if self.game_state == 'playing':
+                if self.spawn_invincibility_timer > 0:
+                    self.spawn_invincibility_timer -= 1
+                
+                current_dimension_str = 'gema' if self.player.in_gema_dimension else 'normal'
+                active_platforms = [p['rect'] for p in self.platforms if p['dim'] in [current_dimension_str, 'both']]
+                
+                self.player.update(active_platforms)
+                
+                if self.player.is_alive:
+                    self.handle_triggers()
+                    self.handle_damage()
+                    self.check_level_completion()
+                else: 
+                    if self.is_in_death_delay:
+                        is_ready_for_delay = (self.player.state == 'death' and self.player.animation_finished) or (self.player.state != 'death')
+                        if is_ready_for_delay:
+                            current_time = pygame.time.get_ticks()
+                            if current_time - self.death_delay_start_time > self.death_delay_timer:
+                                self.respawn_player()
+                    elif self.player.hearts <= 0:
+                        print("Game Over! Kembali ke Level 1...")
+                        self.current_level_index = 0
+                        level_pair = self.levels[self.current_level_index]
+                        self.setup_level(level_pair[0], level_pair[1], new_game=True)
+                
+                self.update_animated_traps()
 
             camera_offset_x = self.player.rect.centerx - self.game_surface_width / 2
             camera_offset_y = CAMERA_MANUAL_OFFSET_Y
@@ -286,16 +345,19 @@ class Game:
             final_offset_y = camera_offset_y
             
             self.game_surface.fill(COLOR_BG_GEMA if self.player.in_gema_dimension else COLOR_BG_NORMAL)
+            for layer in reversed(self.parallax_layers):
+                layer.draw(self.game_surface, camera_offset_x, 0)
             
+            current_dimension_str = 'gema' if self.player.in_gema_dimension else 'normal'
+
             for layer in reversed(self.parallax_layers):
                 layer.draw(self.game_surface, camera_offset_x, 0)
 
-            overlay = pygame.Surface((self.game_surface_width, self.game_surface_height), pygame.SRCALPHA)
             if self.player.in_gema_dimension:
-                overlay.fill((75, 0, 130, 100))
-            else:
-                overlay.fill((0, 0, 0, 0))
-            self.game_surface.blit(overlay, (0, 0))
+                self.moon_shadow_object.draw(self.game_surface, camera_offset_x)
+                self.moon_object.draw(self.game_surface, camera_offset_x)
+
+
 
             for p in self.platforms:
                 if p['dim'] in [current_dimension_str, 'both']:
@@ -322,8 +384,21 @@ class Game:
             
             self.screen.blit(pygame.transform.scale(self.game_surface, self.screen.get_size()), (0, 0))
 
-            for i in range(self.player.hearts):
-                self.screen.blit(self.heart_icon, (10 + i * 35, 10))
+            if self.game_state == 'main_menu':
+                
+                self.draw_text("Dimensi Jebakan", 80, (255, 255, 255), SCREEN_WIDTH / 2, SCREEN_HEIGHT / 4, shadow_color=(20, 20, 20))
+                
+                start_color = (150, 150, 150) if start_button_rect.collidepoint(mouse_pos) else (100, 100, 100)
+                pygame.draw.rect(self.screen, start_color, start_button_rect, border_radius=10)
+                self.draw_text("Mulai", 32, (255, 255, 255), start_button_rect.centerx, start_button_rect.centery)
+                
+                exit_color = (150, 150, 150) if exit_button_rect.collidepoint(mouse_pos) else (100, 100, 100)
+                pygame.draw.rect(self.screen, exit_color, exit_button_rect, border_radius=10)
+                self.draw_text("Keluar", 32, (255, 255, 255), exit_button_rect.centerx, exit_button_rect.centery)
+
+            elif self.game_state == 'playing':
+                for i in range(self.player.hearts):
+                    self.screen.blit(self.heart_icon, (10 + i * 35, 10))
 
             pygame.display.flip()
             self.clock.tick(FPS)
@@ -333,3 +408,5 @@ class Game:
 if __name__ == '__main__':
     game = Game()
     game.run()
+
+
