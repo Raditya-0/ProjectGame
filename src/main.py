@@ -7,7 +7,8 @@ from parallax import ParallaxLayer
 class Game:
     def __init__(self):
         pygame.init()
-        self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
+        pygame.mixer.init()
+        self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.FULLSCREEN)
         self.game_surface_width = SCREEN_WIDTH // CAMERA_ZOOM_DIVIDER
         self.game_surface_height = SCREEN_HEIGHT // CAMERA_ZOOM_DIVIDER
         self.game_surface = pygame.Surface((self.game_surface_width, self.game_surface_height))
@@ -234,6 +235,12 @@ class Game:
     def run(self):
         level_pair = self.levels[self.current_level_index]
         self.setup_level(level_pair[0], level_pair[1], new_game=True)
+
+        try:
+            pygame.mixer.music.load('C:/Users/Lenovo/Documents/GitHub/ProjectGameGIGA/Assets/Sound/music_platformer.ogg')
+            pygame.mixer.music.play(-1) 
+        except pygame.error as e:
+            print(f"Tidak bisa memuat file musik: {e}")
         
         while self.running:
             for event in pygame.event.get():
