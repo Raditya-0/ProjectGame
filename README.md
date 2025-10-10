@@ -81,3 +81,12 @@ Ketika game di-pause, akan ada empat tombol:
 
 * **Progres Berbasis Level** adalah **Kemajuan pemain ditandai dengan level yang berhasil dicapai**.
 * **Penyelesaian Level** adalah **Menyelesaikan sebuah level akan memberikan akses ke level berikutnya, yang berisi jebakan dan teka-teki yang lebih kompleks**.
+
+## Referensi Asset 
+* https://bdragon1727.itch.io/free-trap-platformer
+* https://srobinson111.itch.io/pixel-campfire/download/eyJleHBpcmVzIjoxNzYwMDc3NDI1LCJpZCI6MzY2Nzc4MH0%3d.kvIwjdLARtKPHSzt%2f1VQokak0F4%3d
+* https://edermunizz.itch.io/free-pixel-art-forest
+* https://aamatniekss.itch.io/fantasy-knight-free-pixelart-animated-character?download
+* https://bruno-farias.itch.io/eclipse
+* https://ansimuz.itch.io/sunny-land-pixel-game-art
+
