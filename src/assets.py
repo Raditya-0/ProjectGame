@@ -1,19 +1,19 @@
 import pygame
 from settings import *
 
-def create_platform_surface(width, height, dimension):
-    color = COLOR_PLATFORM_NORMAL if dimension == 'normal' else COLOR_PLATFORM_GEMA
-    surface = pygame.Surface((width, height))
-    surface.fill(color)
-    return surface
+# def create_platform_surface(width, height, dimension):
+#     color = COLOR_PLATFORM_NORMAL if dimension == 'normal' else COLOR_PLATFORM_GEMA
+#     surface = pygame.Surface((width, height))
+#     surface.fill(color)
+#     return surface
 
-def create_trap_surface(width, height):
-    surface = pygame.Surface((width, height), pygame.SRCALPHA)
-    num_spikes = width // 20
-    for i in range(num_spikes):
-        points = [(i*20, height), (i*20 + 10, 0), (i*20 + 20, height)]
-        pygame.draw.polygon(surface, COLOR_TRAP, points)
-    return surface
+# def create_trap_surface(width, height):
+#     surface = pygame.Surface((width, height), pygame.SRCALPHA)
+#     num_spikes = width // 20
+#     for i in range(num_spikes):
+#         points = [(i*20, height), (i*20 + 10, 0), (i*20 + 20, height)]
+#         pygame.draw.polygon(surface, COLOR_TRAP, points)
+#     return surface
 
 def create_door_surface(width, height):
     surface = pygame.Surface((width, height))

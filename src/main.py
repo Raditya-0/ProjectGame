@@ -285,7 +285,7 @@ class Game:
             self.setup_level(level_pair[0], level_pair[1], new_game=True)
             self.player.hearts = current_hearts
         else:
-            self.running = False; print("Selamat! Anda telah menyelesaikan semua level!")
+            self.game_state = 'game_over_win'
 
     def check_level_completion(self):
         if self.player.is_alive and self.door_rect and self.door_rect.contains(self.player.rect):
@@ -313,20 +313,17 @@ class Game:
         self.screen.blit(text_surface, text_rect)
 
     def draw_pause_menu(self):
-        # Semi-transparent overlay, now using the full screen dimensions
         overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
         overlay.fill((0, 0, 0, 150))
         self.screen.blit(overlay, (0, 0))
 
         self.draw_text("Paused", 80, (255, 255, 255), SCREEN_WIDTH / 2, SCREEN_HEIGHT / 4, shadow_color=(20, 20, 20))
-        
-        # Buttons
+
         self.resume_button = pygame.Rect(SCREEN_WIDTH / 2 - 100, SCREEN_HEIGHT / 2 - 75, 200, 50)
         self.restart_button = pygame.Rect(SCREEN_WIDTH / 2 - 100, SCREEN_HEIGHT / 2, 200, 50)
         self.settings_button = pygame.Rect(SCREEN_WIDTH / 2 - 100, SCREEN_HEIGHT / 2 + 75, 200, 50)
         self.main_menu_button = pygame.Rect(SCREEN_WIDTH / 2 - 100, SCREEN_HEIGHT / 2 + 150, 200, 50)
-        
-        # Draw buttons
+
         buttons = [
             (self.resume_button, "Lanjutkan"),
             (self.restart_button, "Ulangi"),
@@ -359,6 +356,27 @@ class Game:
         back_color = (150, 150, 150) if self.back_button.collidepoint(mouse_pos) else (100, 100, 100)
         pygame.draw.rect(self.screen, back_color, self.back_button, border_radius=10)
         self.draw_text("Kembali", 32, (255, 255, 255), self.back_button.centerx, self.back_button.centery)
+
+    def draw_win_screen(self):
+        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 180)) 
+        self.screen.blit(overlay, (0, 0))
+        
+        self.draw_text("Selamat! Semua Level Selesai!", 60, (255, 255, 255), SCREEN_WIDTH / 2, SCREEN_HEIGHT / 4)
+
+        self.restart_button = pygame.Rect(SCREEN_WIDTH / 2 - 100, SCREEN_HEIGHT / 2, 200, 50)
+        self.main_menu_button = pygame.Rect(SCREEN_WIDTH / 2 - 100, SCREEN_HEIGHT / 2 + 75, 200, 50)
+
+        buttons = [
+            (self.restart_button, "Restart"),
+            (self.main_menu_button, "Menu Utama")
+        ]
+        
+        mouse_pos = pygame.mouse.get_pos()
+        for rect, text in buttons:
+            color = (150, 150, 150) if rect.collidepoint(mouse_pos) else (100, 100, 100)
+            pygame.draw.rect(self.screen, color, rect, border_radius=10)
+            self.draw_text(text, 32, (255, 255, 255), rect.centerx, rect.centery)
 
     def run(self):
         level_pair = self.levels[self.current_level_index]
@@ -430,6 +448,18 @@ class Game:
                                 level_pair = self.levels[self.current_level_index]
                                 self.setup_level(level_pair[0], level_pair[1], new_game=True)
                                 self.game_state = 'main_menu'
+                    elif self.game_state == 'game_over_win':
+                        if self.restart_button.collidepoint(mouse_pos):
+                            self.current_level_index = 0
+                            level_pair = self.levels[self.current_level_index]
+                            self.setup_level(level_pair[0], level_pair[1], new_game=True)
+                            self.player.hearts = PLAYER_START_HEARTS
+                            self.game_state = 'playing' 
+                        if self.main_menu_button.collidepoint(mouse_pos):
+                            self.current_level_index = 0
+                            level_pair = self.levels[self.current_level_index]
+                            self.setup_level(level_pair[0], level_pair[1], new_game=True)
+                            self.game_state = 'main_menu' 
 
             if self.game_state == 'playing':
                 if self.spawn_invincibility_timer > 0:
@@ -519,7 +549,7 @@ class Game:
                 self.draw_text("||", 32, (255, 255, 255), pause_button_rect.centerx, pause_button_rect.centery, shadow_color=None)
             
             if self.game_state == 'main_menu':
-                self.draw_text("Dimensi Jebakan", 80, (255, 255, 255), SCREEN_WIDTH / 2, SCREEN_HEIGHT / 4, shadow_color=(20, 20, 20))
+                self.draw_text("Dual Dimension", 80, (255, 255, 255), SCREEN_WIDTH / 2, SCREEN_HEIGHT / 4, shadow_color=(20, 20, 20))
                 
                 start_color = (150, 150, 150) if start_button_rect.collidepoint(mouse_pos) else (100, 100, 100)
                 pygame.draw.rect(self.screen, start_color, start_button_rect, border_radius=10)
@@ -534,6 +564,9 @@ class Game:
                     self.draw_settings_menu()
                 else:
                     self.draw_pause_menu()
+
+            elif self.game_state == 'game_over_win':
+                self.draw_win_screen()
             
             pygame.display.flip()
             self.clock.tick(FPS)

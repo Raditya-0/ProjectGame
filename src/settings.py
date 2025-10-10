@@ -1,7 +1,7 @@
 SCREEN_WIDTH = 1260
 SCREEN_HEIGHT = 768
 FPS = 60
-TITLE = "Dimensi Jebakan"
+TITLE = "Dual Dimension"
 
 COLOR_BG_NORMAL = (135, 206, 255)
 COLOR_BG_GEMA = (75, 0, 130)
