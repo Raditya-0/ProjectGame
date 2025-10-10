@@ -1,11 +1,8 @@
-# main.py
-# File utama (Logika Jeda Kematian & Animasi)
-
 import pygame
 from settings import *
 import assets
 from player import Player
-from level import level_1_layout, level_2_layout
+from parallax import ParallaxLayer
 
 class Game:
     def __init__(self):
@@ -18,40 +15,141 @@ class Game:
         self.clock = pygame.time.Clock()
         self.running = True
         self.font = pygame.font.Font(None, 40)
+        
+        self.spike_animation_frames = []
+        self.parallax_layers = []
         self.load_assets()
-        self.levels = [level_1_layout, level_2_layout]
+        
+        self.levels = [
+            ("C:/Users/Lenovo/Documents/GitHub/ProjectGameGIGA/src/levels/level_1_normal.txt", "C:/Users/Lenovo/Documents/GitHub/ProjectGameGIGA/src/levels/level_1_gema.txt")
+        ]
         self.current_level_index = 0
+        
         self.spawn_invincibility_timer = 0
         self.spawn_invincibility_duration = 10
-        
         self.death_delay_timer = 0
         self.death_delay_start_time = 0
         self.is_in_death_delay = False
 
-    def load_assets(self): self.heart_icon = assets.create_heart_surface()
-        
-    def setup_level(self, layout, new_game=False):
-        start_platform_data = layout[0]
-        start_x, platform_top_y = 100, start_platform_data[1]
-        start_y = platform_top_y - 1
-        self.start_pos = (start_x, start_y)
-        self.player = Player(start_x, start_y)
-        
-        # Hanya reset jebakan jika ini game baru / game over total
+    def load_assets(self):
+        self.heart_icon = assets.create_heart_surface()
+        try:
+            self.tile_images = {
+                'G': pygame.image.load('C:/Users/Lenovo/Documents/GitHub/ProjectGameGIGA/Assets/Tiles/ground.png').convert_alpha(),
+                'P': pygame.image.load('C:/Users/Lenovo/Documents/GitHub/ProjectGameGIGA/Assets/Tiles/platform.png').convert_alpha(),
+            }
+        except pygame.error as e:
+            print(f"Error saat memuat gambar tile: {e}")
+            self.running = False
+
+        try:
+            spike_sheet = pygame.image.load("C:/Users/Lenovo/Documents/GitHub/ProjectGameGIGA/Assets/Tiles/spike_animation.png").convert_alpha()
+            frame_width, frame_height, frame_count = 40, 40, 4
+            left_margin, gap_width, top_margin = 0, 0, 0
+            for i in range(frame_count):
+                x_pos = left_margin + i * (frame_width + gap_width)
+                y_pos = top_margin
+                frame_surface = pygame.Surface((frame_width, frame_height), pygame.SRCALPHA)
+                frame_surface.blit(spike_sheet, (0, 0), (x_pos, y_pos, frame_width, frame_height))
+                self.spike_animation_frames.append(frame_surface)
+        except pygame.error as e:
+            print(f"Error saat memuat animasi duri: {e}")
+            self.running = False
+
+
+        self.forest_layers_images = []
+        try:
+            for i in range(10):
+                path = f"C:\\Users\\Lenovo\\Documents\\GitHub\\ProjectGameGIGA\\Assets\\Background\\forest_layer_{i}.png"
+                image = pygame.image.load(path).convert_alpha()
+                scaled_image = pygame.transform.scale(image, (self.game_surface_height * image.get_width() / image.get_height(), self.game_surface_height))
+                self.forest_layers_images.append(scaled_image)
+        except pygame.error as e:
+            print(f"Error saat memuat gambar background hutan: {e}")
+            self.running = False
+
+    def setup_level(self, normal_map_file, gema_map_file, new_game=False):
         if new_game:
+            self.platforms = []
+            self.traps = []
             self.trigger_traps = []
-            self.platforms, self.traps, self.door_rect = [], [], None
-            for item in layout:
-                if isinstance(item, dict):
-                    if item['type'] == 'trigger_trap':
-                        tr, tp = item['trigger_rect'], item['trap_rect']
-                        self.trigger_traps.append({'trigger_rect': pygame.Rect(tr), 'trap_rect': pygame.Rect(tp), 'dim': item['dim'], 'is_active': False})
-                else:
-                    x, y, w, h, dimension, obj_type = item
-                    rect = pygame.Rect(x, y, w, h)
-                    if obj_type == 'platform': self.platforms.append({'rect': rect, 'dim': dimension})
-                    elif obj_type == 'trap': self.traps.append({'rect': rect, 'dim': dimension})
-                    elif obj_type == 'door': self.door_rect = rect
+            self.door_rect = None
+
+        tile_size = 40
+
+        triggers_pos = {'normal': [], 'gema': []}
+        trap_zones_pos = {'normal': [], 'gema': []}
+
+        try:
+            with open(normal_map_file, 'r') as file:
+                for y, line in enumerate(file):
+                    for x, char in enumerate(line):
+                        world_x, world_y = x * tile_size, y * tile_size
+                        rect = pygame.Rect(world_x, world_y, tile_size, tile_size)
+
+                        if char == 'G':
+                            self.platforms.append({'rect': rect, 'dim': 'both', 'char': 'G'})
+                        elif char == 'P':
+                            self.platforms.append({'rect': rect, 'dim': 'normal', 'char': 'P'})
+                        elif char == 't':
+                            triggers_pos['normal'].append(rect)
+                        elif char in 'jJ':
+                            trap_zones_pos['normal'].append(rect)
+                        elif char == 'S':
+                            self.start_pos = (world_x, world_y + tile_size)
+                        elif char == 'D':
+                            self.door_rect = pygame.Rect(world_x, world_y, tile_size, tile_size * 1)
+        except FileNotFoundError:
+            print(f"Error: File '{normal_map_file}' tidak ditemukan!")
+            self.running = False; return
+
+        try:
+            with open(gema_map_file, 'r') as file:
+                for y, line in enumerate(file):
+                    for x, char in enumerate(line):
+                        world_x, world_y = x * tile_size, y * tile_size
+                        rect = pygame.Rect(world_x, world_y, tile_size, tile_size)
+                        
+                        if char in 'GP':
+                           self.platforms.append({'rect': rect, 'dim': 'gema', 'char': 'P'})
+                        elif char == 't':
+                            triggers_pos['gema'].append(rect)
+                        elif char in 'jJ':
+                            trap_zones_pos['gema'].append(rect)
+        except FileNotFoundError:
+            print(f"Error: File '{gema_map_file}' tidak ditemukan!")
+            self.running = False; return
+        
+        for trigger_rect, trap_rect in zip(triggers_pos['normal'], trap_zones_pos['normal']):
+            self.trigger_traps.append({
+                'trigger_rect': trigger_rect, 'trap_rect': trap_rect, 
+                'dim': 'normal', 'is_active': False, 
+                'frame_index': 0.0, 'animation_finished': False
+            })
+        
+        for trigger_rect, trap_rect in zip(triggers_pos['gema'], trap_zones_pos['gema']):
+            self.trigger_traps.append({
+                'trigger_rect': trigger_rect, 'trap_rect': trap_rect, 
+                'dim': 'gema', 'is_active': False, 
+                'frame_index': 0.0, 'animation_finished': False
+            })
+
+        if new_game or not hasattr(self, 'player'):
+            if hasattr(self, 'start_pos'):
+                self.player = Player(self.start_pos[0], self.start_pos[1])
+            else:
+                self.player = Player(100, 100)
+                print("Peringatan: 'S' (start position) tidak ditemukan!")
+        else:
+            self.player.respawn(self.start_pos)
+        
+        if new_game:
+            self.parallax_layers = []
+            speeds = [0.55, 0.5, 0.45, 0.4, 0.35, 0.3, 0.25, 0.2, 0.15, 0.1]
+            for i in range(len(self.forest_layers_images)):
+                if i < len(speeds):
+                    layer = ParallaxLayer(self.forest_layers_images[i], speeds[i])
+                    self.parallax_layers.append(layer)
         
         self.spawn_invincibility_timer = self.spawn_invincibility_duration
 
@@ -62,10 +160,23 @@ class Game:
             if not trap['is_active'] and (trap['dim'] in [current_dimension_str, 'both']):
                 if self.player.rect.colliderect(trap['trigger_rect']): trap['is_active'] = True
 
+    def update_animated_traps(self):
+        SPIKE_ANIMATION_SPEED = 0.2
+        for trap in self.trigger_traps:
+            if trap['is_active'] and not trap['animation_finished']:
+                trap['frame_index'] += SPIKE_ANIMATION_SPEED
+                if trap['frame_index'] >= len(self.spike_animation_frames):
+                    trap['animation_finished'] = True
+                    trap['frame_index'] = len(self.spike_animation_frames) - 1
+
     def respawn_player(self):
         self.player.respawn(self.start_pos)
         self.spawn_invincibility_timer = self.spawn_invincibility_duration
         self.is_in_death_delay = False
+        for trap in self.trigger_traps:
+            trap['is_active'] = False
+            trap['frame_index'] = 0.0
+            trap['animation_finished'] = False
 
     def handle_damage(self):
         if self.spawn_invincibility_timer > 0 or not self.player.is_alive or self.is_in_death_delay: return
@@ -75,138 +186,141 @@ class Game:
             damage_source = 'fall'
             
         current_dimension_str = 'gema' if self.player.in_gema_dimension else 'normal'
-        active_trap_rects = [t['rect'] for t in self.traps if t['dim'] in [current_dimension_str, 'both']]
+        
+        active_trap_rects = []
+        for t in self.traps:
+            if t['dim'] in [current_dimension_str, 'both']:
+                active_trap_rects.append(t['rect'])
         for trap in self.trigger_traps:
             if trap['is_active'] and trap['dim'] in [current_dimension_str, 'both']:
                 active_trap_rects.append(trap['trap_rect'])
+        
         for trap_rect in active_trap_rects:
             if self.player.rect.colliderect(trap_rect):
                 damage_source = 'trap'
                 break
                 
         if damage_source:
-            # Panggil take_damage dan die.
             self.player.take_damage()
-            self.player.die()
 
-            # Jika masih ada sisa hati, mulai jeda 0.5 detik.
-            # Logika ini sekarang berlaku untuk SEMUA jenis kerusakan.
-            if self.player.hearts > 0:
+            if not self.player.is_alive:
+                pass
+            else:
+                self.player.die() 
                 self.is_in_death_delay = True
-                self.death_delay_timer = 300 # Jeda 0.3 detik
+                
+                if damage_source == 'fall':
+                    self.death_delay_timer = 500
+                elif damage_source == 'trap':
+                    self.death_delay_timer = 500
+                
                 self.death_delay_start_time = pygame.time.get_ticks()
 
     def go_to_next_level(self):
-        """Menaikkan indeks level, memuat level baru, dan mempertahankan HP."""
-        # --- PERUBAHAN: Simpan HP saat ini sebelum ganti level ---
         current_hearts = self.player.hearts
-
         self.current_level_index += 1
         if self.current_level_index < len(self.levels):
-            print(f"Memuat Level {self.current_level_index + 1}...")
-            self.setup_level(self.levels[self.current_level_index], new_game=True)
-            
-            # --- PERUBAHAN: Terapkan kembali HP yang disimpan ke player baru ---
+            level_pair = self.levels[self.current_level_index]
+            self.setup_level(level_pair[0], level_pair[1], new_game=True)
             self.player.hearts = current_hearts
         else:
-            self.running = False
-            print("Selamat! Anda telah menyelesaikan semua level!")
+            self.running = False; print("Selamat! Anda telah menyelesaikan semua level!")
 
     def check_level_completion(self):
         if self.player.is_alive and self.door_rect and self.door_rect.contains(self.player.rect):
             self.go_to_next_level()
 
     def run(self):
-            self.setup_level(self.levels[self.current_level_index], new_game=True)
-            
-            camera_offset_x = 0
-            camera_offset_y = 0
-            
-            while self.running:
-                for event in pygame.event.get():
-                    if event.type == pygame.QUIT:
-                        self.running = False
-                    if event.type == pygame.KEYDOWN:
-                        if event.key in [pygame.K_SPACE, pygame.K_UP, pygame.K_w]:
-                            self.player.jump()
-                        if event.key in [pygame.K_LSHIFT, pygame.K_RSHIFT]:
-                            self.player.shift_dimension()
+        level_pair = self.levels[self.current_level_index]
+        self.setup_level(level_pair[0], level_pair[1], new_game=True)
+        
+        while self.running:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    self.running = False
+                if event.type == pygame.KEYDOWN:
+                    if event.key in [pygame.K_SPACE, pygame.K_UP, pygame.K_w]:
+                        self.player.jump()
+                    if event.key in [pygame.K_LSHIFT, pygame.K_RSHIFT]:
+                        self.player.shift_dimension()
 
-                if self.spawn_invincibility_timer > 0:
-                    self.spawn_invincibility_timer -= 1
+            if self.spawn_invincibility_timer > 0:
+                self.spawn_invincibility_timer -= 1
 
-                current_dimension_str = 'gema' if self.player.in_gema_dimension else 'normal'
-                active_platforms = [p['rect'] for p in self.platforms if p['dim'] in [current_dimension_str, 'both']]
+            current_dimension_str = 'gema' if self.player.in_gema_dimension else 'normal'
+            active_platforms = [p['rect'] for p in self.platforms if p['dim'] in [current_dimension_str, 'both']]
+            
+            self.player.update(active_platforms)
+            
+            if self.player.is_alive:
+                self.handle_triggers()
+                self.handle_damage()
+                self.check_level_completion()
+            else: 
+                if self.is_in_death_delay:
+                    is_ready_for_delay = (self.player.state == 'death' and self.player.animation_finished) or (self.player.state != 'death')
+                    if is_ready_for_delay:
+                        current_time = pygame.time.get_ticks()
+                        if current_time - self.death_delay_start_time > self.death_delay_timer:
+                            self.respawn_player()
                 
-                # Selalu update player untuk menangani fisika dan animasi
-                self.player.update(active_platforms)
-                
-                if self.player.is_alive:
-                    # Jika pemain hidup, jalankan semua logika game
-                    self.handle_triggers()
-                    self.handle_damage()
-                    self.check_level_completion()
-                else: 
-                    # Jika pemain mati, tangani logika jeda dan game over
-                    if self.is_in_death_delay:
-                        is_ready_for_delay = (self.player.state == 'death' and self.player.animation_finished) or (self.player.state != 'death')
-                        if is_ready_for_delay:
-                            current_time = pygame.time.get_ticks()
-                            if current_time - self.death_delay_start_time > self.death_delay_timer:
-                                self.respawn_player()
+                elif self.player.hearts <= 0:
+                    print("Game Over! Kembali ke Level 1...")
+                    self.current_level_index = 0
+                    level_pair = self.levels[self.current_level_index]
+                    self.setup_level(level_pair[0], level_pair[1], new_game=True)
+            
+            self.update_animated_traps()
+
+            camera_offset_x = self.player.rect.centerx - self.game_surface_width / 2
+            camera_offset_y = CAMERA_MANUAL_OFFSET_Y
+            final_offset_x = camera_offset_x + CAMERA_MANUAL_OFFSET_X
+            final_offset_y = camera_offset_y
+            
+            self.game_surface.fill(COLOR_BG_GEMA if self.player.in_gema_dimension else COLOR_BG_NORMAL)
+            
+            for layer in reversed(self.parallax_layers):
+                layer.draw(self.game_surface, camera_offset_x, 0)
+
+            overlay = pygame.Surface((self.game_surface_width, self.game_surface_height), pygame.SRCALPHA)
+            if self.player.in_gema_dimension:
+                overlay.fill((75, 0, 130, 100))
+            else:
+                overlay.fill((0, 0, 0, 0))
+            self.game_surface.blit(overlay, (0, 0))
+
+            for p in self.platforms:
+                if p['dim'] in [current_dimension_str, 'both']:
+                    tile_image = self.tile_images.get(p.get('char'))
+                    if tile_image:
+                        scaled_image = pygame.transform.scale(tile_image, (p['rect'].width, p['rect'].height))
+                        self.game_surface.blit(scaled_image, (p['rect'].x - final_offset_x, p['rect'].y - final_offset_y))
+
+            for trap in self.trigger_traps:
+                if trap['is_active'] and trap['dim'] in [current_dimension_str, 'both']:
+                    frame_to_draw = self.spike_animation_frames[int(trap['frame_index'])]
+                    scaled_image = pygame.transform.scale(frame_to_draw, (trap['trap_rect'].width, trap['trap_rect'].height))
                     
-                    # Logika Game Over: kembali ke Level 1
-                    elif self.player.hearts <= 0:
-                        print("Game Over! Kembali ke Level 1...")
-                        self.current_level_index = 0 # Reset ke level pertama
-                        self.setup_level(self.levels[self.current_level_index], new_game=True)
+                    vertical_offset = 20
+                    draw_y = trap['trap_rect'].y + vertical_offset
+                    
+                    self.game_surface.blit(scaled_image, (trap['trap_rect'].x - final_offset_x, draw_y - final_offset_y))
 
-                # --- Logika Kamera dan Drawing ---
-                camera_offset_x = self.player.rect.centerx - self.game_surface_width / 2
-                camera_offset_y = CAMERA_MANUAL_OFFSET_Y # Kamera Y terkunci
-                
-                final_offset_x = camera_offset_x + CAMERA_MANUAL_OFFSET_X
-                final_offset_y = camera_offset_y
-                
-                self.game_surface.fill(COLOR_BG_GEMA if self.player.in_gema_dimension else COLOR_BG_NORMAL)
-                
-                # Gambar semua platform
-                for p in self.platforms:
-                    if p['dim'] in [current_dimension_str, 'both']:
-                        surf = assets.create_platform_surface(p['rect'].width, p['rect'].height, p['dim'])
-                        self.game_surface.blit(surf, (p['rect'].x - final_offset_x, p['rect'].y - final_offset_y))
-                
-                # Gambar semua jebakan yang aktif
-                active_trap_surfaces = []
-                for t in self.traps:
-                    if t['dim'] in [current_dimension_str, 'both']:
-                        active_trap_surfaces.append((t['rect'], assets.create_trap_surface(t['rect'].width, t['rect'].height)))
-                for trap in self.trigger_traps:
-                    if trap['is_active'] and trap['dim'] in [current_dimension_str, 'both']:
-                        surf = assets.create_trap_surface(trap['trap_rect'].width, trap['trap_rect'].height)
-                        active_trap_surfaces.append((trap['trap_rect'], surf))
-                for rect, surf in active_trap_surfaces:
-                    self.game_surface.blit(surf, (rect.x - final_offset_x, rect.y - final_offset_y))
+            if self.door_rect:
+                door_surf = assets.create_door_surface(self.door_rect.width, self.door_rect.height)
+                self.game_surface.blit(door_surf, (self.door_rect.x - final_offset_x, self.door_rect.y - final_offset_y))
+            
+            self.player.draw(self.game_surface, final_offset_x, final_offset_y)
+            
+            self.screen.blit(pygame.transform.scale(self.game_surface, self.screen.get_size()), (0, 0))
 
-                # Gambar pintu
-                if self.door_rect:
-                    door_surf = assets.create_door_surface(self.door_rect.width, self.door_rect.height)
-                    self.game_surface.blit(door_surf, (self.door_rect.x - final_offset_x, self.door_rect.y - final_offset_y))
-                
-                # Gambar pemain
-                self.player.draw(self.game_surface, final_offset_x, final_offset_y)
-                
-                # Skalakan game surface ke layar utama
-                self.screen.blit(pygame.transform.scale(self.game_surface, (SCREEN_WIDTH, SCREEN_HEIGHT)), (0, 0))
+            for i in range(self.player.hearts):
+                self.screen.blit(self.heart_icon, (10 + i * 35, 10))
 
-                # Gambar UI Hati di atas segalanya
-                for i in range(self.player.hearts):
-                    self.screen.blit(self.heart_icon, (10 + i * 35, 10))
-
-                pygame.display.flip()
-                self.clock.tick(FPS)
-                
-            pygame.quit()
+            pygame.display.flip()
+            self.clock.tick(FPS)
+            
+        pygame.quit()
 
 if __name__ == '__main__':
     game = Game()

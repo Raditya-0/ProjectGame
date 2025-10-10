@@ -16,6 +16,6 @@ JUMP_STRENGTH = 18
 PLAYER_START_HEARTS = 8
 
 ANIMATION_SPEED = 7
-CAMERA_ZOOM_DIVIDER = 2  # Ganti untuk zoom. 2 = 200% zoom, 1 = tidak ada zoom
+CAMERA_ZOOM_DIVIDER = 2.0  # Ganti untuk zoom. 2 = 200% zoom, 1 = tidak ada zoom
 CAMERA_MANUAL_OFFSET_X = 180 # Angka positif geser kamera ke kanan, negatif ke kiri
-CAMERA_MANUAL_OFFSET_Y = 390 # Angka positif geser kamera ke bawah, negatif ke atas
+CAMERA_MANUAL_OFFSET_Y = 370 # Angka positif geser kamera ke bawah, negatif ke atas
