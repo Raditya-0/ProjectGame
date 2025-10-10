@@ -26,7 +26,7 @@
 
 ### **b. Gameplay Utama**
 
-**Pemain memulai dari Level 1**. **Setiap kali pemain berhasil mencapai pintu, mereka akan pindah ke level selanjutnya**. **Api unggun berfungsi sebagai *checkpoint*.
+**Pemain memulai dari Level 1**. **Setiap kali pemain berhasil mencapai pintu, mereka akan pindah ke level selanjutnya**. Api unggun berfungsi sebagai *checkpoint*.
 
 * Jika pemain kehilangan satu nyawa, mereka akan kembali ke *checkpoint* terakhir.
 * **Jika semua nyawa habis, pemain akan mengalami Game Over dan harus mengulang dari level 1**.
