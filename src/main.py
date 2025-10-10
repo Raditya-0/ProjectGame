@@ -25,7 +25,9 @@ class Game:
         
         self.levels = [
             ("C:/Users/Lenovo/Documents/GitHub/ProjectGameGIGA/src/levels/level_1_normal.txt", "C:/Users/Lenovo/Documents/GitHub/ProjectGameGIGA/src/levels/level_1_gema.txt"),
-            ("C:/Users/Lenovo/Documents/GitHub/ProjectGameGIGA/src/levels/level_2_normal.txt", "C:/Users/Lenovo/Documents/GitHub/ProjectGameGIGA/src/levels/level_2_gema.txt")
+            ("C:/Users/Lenovo/Documents/GitHub/ProjectGameGIGA/src/levels/level_2_normal.txt", "C:/Users/Lenovo/Documents/GitHub/ProjectGameGIGA/src/levels/level_2_gema.txt"),
+            ("C:/Users/Lenovo/Documents/GitHub/ProjectGameGIGA/src/levels/level_3_normal.txt", "C:/Users/Lenovo/Documents/GitHub/ProjectGameGIGA/src/levels/level_3_gema.txt"),
+            ("C:/Users/Lenovo/Documents/GitHub/ProjectGameGIGA/src/levels/level_4_normal.txt", "C:/Users/Lenovo/Documents/GitHub/ProjectGameGIGA/src/levels/level_4_gema.txt")
         ]
         self.current_level_index = 0
         
@@ -401,9 +403,7 @@ class Game:
                 if event.type == pygame.QUIT:
                     self.running = False
                 if event.type == pygame.KEYDOWN:
-                    if event.key == pygame.K_ESCAPE:
-                        self.running = False
-                    if event.key == pygame.K_p and self.game_state == 'playing':
+                    if event.key == pygame.K_ESCAPE and self.game_state == 'playing':
                         self.prev_game_state = self.game_state
                         self.game_state = 'paused'
                     elif event.key == pygame.K_p and self.game_state == 'paused':
