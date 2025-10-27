@@ -3,7 +3,9 @@ from settings import *
 import assets
 from player import Player
 from parallax import ParallaxLayer, ParallaxObject
+import os
 
+base_path = os.path.dirname(os.path.abspath(__file__))
 class Game:
     def __init__(self):
         pygame.init()
@@ -21,14 +23,14 @@ class Game:
         
         self.spike_animation_frames = []
         self.parallax_layers = []
-        self.load_assets()
         
         self.levels = [
-            ("C:/Users/Lenovo/Documents/GitHub/ProjectGameGIGA/src/levels/level_1_normal.txt", "C:/Users/Lenovo/Documents/GitHub/ProjectGameGIGA/src/levels/level_1_gema.txt"),
-            ("C:/Users/Lenovo/Documents/GitHub/ProjectGameGIGA/src/levels/level_2_normal.txt", "C:/Users/Lenovo/Documents/GitHub/ProjectGameGIGA/src/levels/level_2_gema.txt"),
-            ("C:/Users/Lenovo/Documents/GitHub/ProjectGameGIGA/src/levels/level_3_normal.txt", "C:/Users/Lenovo/Documents/GitHub/ProjectGameGIGA/src/levels/level_3_gema.txt"),
-            ("C:/Users/Lenovo/Documents/GitHub/ProjectGameGIGA/src/levels/level_4_normal.txt", "C:/Users/Lenovo/Documents/GitHub/ProjectGameGIGA/src/levels/level_4_gema.txt")
+            (os.path.join(base_path, "levels", "level_1_normal.txt"), os.path.join(base_path, "levels", "level_1_gema.txt")),
+            (os.path.join(base_path, "levels", "level_2_normal.txt"), os.path.join(base_path, "levels", "level_2_gema.txt")),
+            (os.path.join(base_path, "levels", "level_3_normal.txt"), os.path.join(base_path, "levels", "level_3_gema.txt")),
+            (os.path.join(base_path, "levels", "level_4_normal.txt"), os.path.join(base_path, "levels", "level_4_gema.txt"))
         ]
+        self.load_assets()
         self.current_level_index = 0
         
         self.spawn_invincibility_timer = 0
@@ -41,18 +43,19 @@ class Game:
         self.is_settings_open = False
 
     def load_assets(self):
+        assets_path = os.path.join(base_path, '..', 'Assets')
         self.heart_icon = assets.create_heart_surface()
         try:
             self.tile_images = {
-                'G': pygame.image.load('C:/Users/Lenovo/Documents/GitHub/ProjectGameGIGA/Assets/Tiles/ground.png').convert_alpha(),
-                'P': pygame.image.load('C:/Users/Lenovo/Documents/GitHub/ProjectGameGIGA/Assets/Tiles/platform.png').convert_alpha(),
+                'G': pygame.image.load(os.path.join(assets_path, 'Tiles', 'ground.png')).convert_alpha(),
+                'P': pygame.image.load(os.path.join(assets_path, 'Tiles', 'platform.png')).convert_alpha(),
             }
         except pygame.error as e:
             print(f"Error saat memuat gambar tile: {e}")
             self.running = False
 
         try:
-            spike_sheet = pygame.image.load("C:/Users/Lenovo/Documents/GitHub/ProjectGameGIGA/Assets/Tiles/spike_animation.png").convert_alpha()
+            spike_sheet = pygame.image.load(os.path.join(assets_path, 'Tiles', 'spike_animation.png')).convert_alpha()
             frame_width, frame_height, frame_count = 40, 40, 4
             left_margin, gap_width, top_margin = 0, 0, 0
             for i in range(frame_count):
@@ -68,7 +71,7 @@ class Game:
         self.forest_layers_images = []
         try:
             for i in range(10):
-                path = f"C:\\Users\\Lenovo\\Documents\\GitHub\\ProjectGameGIGA\\Assets\\Background\\forest_layer_{i}.png"
+                path = os.path.join(assets_path, 'Background', f'forest_layer_{i}.png')
                 image = pygame.image.load(path).convert_alpha()
                 scaled_image = pygame.transform.scale(image, (self.game_surface_height * image.get_width() / image.get_height(), self.game_surface_height))
                 self.forest_layers_images.append(scaled_image)
@@ -77,8 +80,8 @@ class Game:
             self.running = False
 
         try:
-            self.moon_image = pygame.image.load("C:/Users/Lenovo/Documents/GitHub/ProjectGameGIGA/Assets/Background/moon.png").convert_alpha()
-            self.moon_shadow_image = pygame.image.load("C:/Users/Lenovo/Documents/GitHub/ProjectGameGIGA/Assets/Background/moon_shadow.png").convert_alpha()
+            self.moon_image = pygame.image.load(os.path.join(assets_path, 'Background', 'moon.png')).convert_alpha()
+            self.moon_shadow_image = pygame.image.load(os.path.join(assets_path, 'Background', 'moon_shadow.png')).convert_alpha()
         except pygame.error as e:
             print(f"Error saat memuat gambar bulan: {e}")
             self.running = False
@@ -86,7 +89,7 @@ class Game:
         self.campfire_animation_frames = []
         try:
             for i in range(1, 8):
-                path = f"C:/Users/Lenovo/Documents/GitHub/ProjectGameGIGA/Assets/Background/Campfire/campFire{i}.png"
+                path = os.path.join(assets_path, 'Background', 'Campfire', f'campFire{i}.png')
                 image = pygame.image.load(path).convert_alpha()
                 self.campfire_animation_frames.append(image)
         except pygame.error as e:
@@ -385,7 +388,8 @@ class Game:
         self.setup_level(level_pair[0], level_pair[1], new_game=True)
 
         try:
-            pygame.mixer.music.load('C:\\Users\\Lenovo\\Documents\\GitHub\\ProjectGameGIGA\\Assets\\Sound\\music_platformer.ogg')
+            music_path = os.path.join(base_path, '..', 'Assets', 'Sound', 'music_platformer.ogg')
+            pygame.mixer.music.load(music_path)
             pygame.mixer.music.play(-1) 
         except pygame.error as e:
             print(f"Tidak bisa memuat file musik: {e}")

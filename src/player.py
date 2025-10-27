@@ -2,6 +2,9 @@ import os
 import pygame
 from settings import *
 
+base_path = os.path.dirname(os.path.abspath(__file__))
+assets_path = os.path.join(base_path, '..', 'Assets')
+
 class Player:
     def __init__(self, x, y):
         self._load_animations_from_spritesheet()
@@ -24,9 +27,11 @@ class Player:
 
     def _load_animations_from_spritesheet(self):
         self.animations = {'idle': [], 'run': [], 'jump': [], 'fall': [], 'death': []}
-        
+        player_asset_path = os.path.join(assets_path, 'Player')
+
         try:
-            idle_sheet = pygame.image.load('C:\\Users\\Lenovo\\Documents\\GitHub\\ProjectGameGIGA\\Assets\\Player\\_Idle.png').convert_alpha() 
+            idle_sheet_path = os.path.join(player_asset_path, '_Idle.png')
+            idle_sheet = pygame.image.load(idle_sheet_path).convert_alpha() 
             frame_width, frame_height, frame_count = 21, 38, 10
             left_margin, gap_width, top_margin = 44, 99, 42
             for i in range(frame_count):
@@ -39,7 +44,8 @@ class Player:
             self.animations['idle'].append(pygame.Surface((21, 38)))
 
         try:
-            run_sheet = pygame.image.load('C:\\Users\\Lenovo\\Documents\\GitHub\\ProjectGameGIGA\\Assets\\Player\\_Run.png').convert_alpha() 
+            run_sheet_path = os.path.join(player_asset_path, '_Run.png')
+            run_sheet = pygame.image.load(run_sheet_path).convert_alpha() 
             frame_width, frame_height, frame_count = 30, 40, 10
             left_margin, gap_width, top_margin = 43, 90, 40
             for i in range(frame_count):
@@ -52,7 +58,8 @@ class Player:
             self.animations['run'].append(pygame.Surface((30, 40)))
             
         try:
-            jump_sheet = pygame.image.load('C:\\Users\\Lenovo\\Documents\\GitHub\\ProjectGameGIGA\\Assets\\Player\\_Jump.png').convert_alpha() 
+            jump_sheet_path = os.path.join(player_asset_path, '_Jump.png')
+            jump_sheet = pygame.image.load(jump_sheet_path).convert_alpha() 
             frame_width, frame_height, frame_count = 25, 38, 3
             left_margin, gap_width, top_margin = 44, 95, 42
             for i in range(frame_count):
@@ -65,7 +72,8 @@ class Player:
             self.animations['jump'].append(pygame.Surface((30, 40)))
             
         try:
-            fall_sheet = pygame.image.load('C:\\Users\\Lenovo\\Documents\\GitHub\\ProjectGameGIGA\\Assets\\Player\\_Fall.png').convert_alpha() 
+            fall_sheet_path = os.path.join(player_asset_path, '_Fall.png')
+            fall_sheet = pygame.image.load(fall_sheet_path).convert_alpha() 
             frame_width, frame_height, frame_count = 29, 38, 3
             left_margin, gap_width, top_margin = 39, 91, 42
             for i in range(frame_count):
@@ -78,7 +86,7 @@ class Player:
             self.animations['fall'].append(pygame.Surface((30, 40)))
 
         frame_count = 10
-        asset_folder = 'C:\\Users\\Lenovo\\Documents\\GitHub\\ProjectGameGIGA\\Assets\\Player\\Death' 
+        asset_folder = os.path.join(player_asset_path, 'Death')
         self.animations['death'] = [] 
 
         try:
