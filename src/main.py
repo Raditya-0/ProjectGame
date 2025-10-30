@@ -5,6 +5,7 @@ from entity.player import Player
 from parallax import ParallaxLayer, ParallaxObject
 from entity.enemy import Enemy
 import os
+from exception import AssetLoadError, LevelFileNotFound, AudioLoadError
 
 base_path = os.path.dirname(os.path.abspath(__file__))
 class Game:
@@ -52,7 +53,7 @@ class Game:
                 'P': pygame.image.load(os.path.join(assets_path, 'Tiles', 'platform.png')).convert_alpha(),
             }
         except pygame.error as e:
-            print(f"Error saat memuat gambar tile: {e}")
+            print(str(AssetLoadError("Tiles (ground/platform)", e)))
             self.running = False
 
         try:
@@ -66,7 +67,7 @@ class Game:
                 frame_surface.blit(spike_sheet, (0, 0), (x_pos, y_pos, frame_width, frame_height))
                 self.spike_animation_frames.append(frame_surface)
         except pygame.error as e:
-            print(f"Error saat memuat animasi duri: {e}")
+            print(str(AssetLoadError("Tiles spike_animation.png", e)))
             self.running = False
 
         self.forest_layers_images = []
@@ -77,14 +78,14 @@ class Game:
                 scaled_image = pygame.transform.scale(image, (self.game_surface_height * image.get_width() / image.get_height(), self.game_surface_height))
                 self.forest_layers_images.append(scaled_image)
         except pygame.error as e:
-            print(f"Error saat memuat gambar background hutan: {e}")
+            print(str(AssetLoadError("Background forest layers", e)))
             self.running = False
 
         try:
             self.moon_image = pygame.image.load(os.path.join(assets_path, 'Background', 'moon.png')).convert_alpha()
             self.moon_shadow_image = pygame.image.load(os.path.join(assets_path, 'Background', 'moon_shadow.png')).convert_alpha()
         except pygame.error as e:
-            print(f"Error saat memuat gambar bulan: {e}")
+            print(str(AssetLoadError("Background moon/moon_shadow", e)))
             self.running = False
 
         self.campfire_animation_frames = []
@@ -94,7 +95,7 @@ class Game:
                 image = pygame.image.load(path).convert_alpha()
                 self.campfire_animation_frames.append(image)
         except pygame.error as e:
-            print(f"Error saat memuat animasi api unggun: {e}")
+            print(str(AssetLoadError("Background Campfire frames", e)))
             self.running = False
 
 
@@ -106,6 +107,7 @@ class Game:
             self.door_rect = None
             self.campfires = []
             self.enemies = []
+            self.enemy_spawns = []  # store spawn definitions for respawn
 
         tile_size = 40
 
@@ -113,7 +115,6 @@ class Game:
         trap_zones_pos = {'normal': [], 'gema': []}
 
         try:
-            # Collect patrol markers and enemy spawns for normal map
             left_markers_normal = {}
             right_markers_normal = {}
             enemy_spawns_normal = []
@@ -143,11 +144,10 @@ class Game:
                         elif char in 'rR':
                             right_markers_normal.setdefault(y, []).append(world_x + tile_size // 2)
         except FileNotFoundError:
-            print(f"Error: File '{normal_map_file}' tidak ditemukan!")
+            print(str(LevelFileNotFound(normal_map_file)))
             self.running = False; return
 
         try:
-            # Collect platforms/traps for gema, and also accept enemy markers in gema
             left_markers_gema = {}
             right_markers_gema = {}
             enemy_spawns_gema = []
@@ -176,12 +176,9 @@ class Game:
                         elif char in 'rR':
                             right_markers_gema.setdefault(y, []).append(world_x + tile_size // 2)
         except FileNotFoundError:
-            print(f"Error: File '{gema_map_file}' tidak ditemukan!")
+            print(str(LevelFileNotFound(gema_map_file)))
             self.running = False; return
 
-        # Build enemies from markers found in BOTH maps. If markers are placed in gema,
-        # also spawn them (so enemies exist regardless of which map they were defined in).
-        # Deduplicate by tile position to avoid double-instantiation.
         seen_spawn_tiles = set()
 
         def add_enemies_from(spawn_list, left_markers, right_markers):
@@ -196,10 +193,14 @@ class Game:
                 left_list = left_markers.get(row, [])
                 right_list = right_markers.get(row, [])
 
-                # Find nearest left <= spawn_x and nearest right >= spawn_x
                 sx = spawn_rect.centerx
                 left_bound = max([lx for lx in left_list if lx <= sx], default=sx - 80)
                 right_bound = min([rx for rx in right_list if rx >= sx], default=sx + 80)
+
+                # Remember spawn for future respawns
+                if new_game or not hasattr(self, 'enemy_spawns'):
+                    self.enemy_spawns = getattr(self, 'enemy_spawns', [])
+                self.enemy_spawns.append((spawn_rect.x, spawn_rect.bottom, left_bound, right_bound))
 
                 enemy = Enemy(spawn_rect.x, spawn_rect.bottom, left_bound, right_bound, size=(30, 30), speed=2.0)
                 self.enemies.append(enemy)
@@ -296,19 +297,17 @@ class Game:
             trap['is_active'] = False
             trap['frame_index'] = 0.0
             trap['animation_finished'] = False
-        # Clear enemy idle lock so they resume patrol after player respawns
-        for enemy in getattr(self, 'enemies', []):
-            if hasattr(enemy, 'clear_contact_idle'):
-                enemy.clear_contact_idle()
+        # Respawn all enemies to original spawns
+        self.enemies = []
+        for sx, sy, lb, rb in getattr(self, 'enemy_spawns', []):
+            self.enemies.append(Enemy(sx, sy, lb, rb, size=(30, 30), speed=2.0))
 
     def handle_damage(self):
-        """Build active hazards and delegate damage logic to Player.apply_hazards."""
         if self.spawn_invincibility_timer > 0 or not self.player.is_alive or self.is_in_death_delay:
             return
 
         current_dimension_str = 'gema' if self.player.in_gema_dimension else 'normal'
 
-        # Build list of active hazard rectangles based on current dimension and triggers
         active_trap_rects = []
         for t in self.traps:
             if t['dim'] in [current_dimension_str, 'both']:
@@ -316,14 +315,15 @@ class Game:
         for trap in self.trigger_traps:
             if trap['is_active'] and trap['dim'] in [current_dimension_str, 'both']:
                 active_trap_rects.append(trap['trap_rect'])
-        # Enemies act as hazards too; if player collides, trigger enemy idle reaction
         for enemy in getattr(self, 'enemies', []):
+            # Only interact with alive, non-dying enemies as hazards
+            if getattr(enemy, 'is_dying', False):
+                continue
             if self.player.rect.colliderect(enemy.rect):
-                if hasattr(enemy, 'on_player_contact'):
+                if hasattr(enemy, 'on_player_contact') and enemy.is_alive:
                     enemy.on_player_contact()
             active_trap_rects.append(enemy.rect)
 
-        # Delegate to player: it will apply damage and tell us if we need a respawn delay
         result = self.player.apply_hazards(active_trap_rects, SCREEN_HEIGHT, is_invincible=False)
         if result:
             if result.get('temporary_death'):
@@ -441,7 +441,7 @@ class Game:
             pygame.mixer.music.load(music_path)
             pygame.mixer.music.play(-1) 
         except pygame.error as e:
-            print(f"Tidak bisa memuat file musik: {e}")
+            print(str(AudioLoadError(music_path, e)))
         
         start_button_rect = pygame.Rect(SCREEN_WIDTH / 2 - 100, SCREEN_HEIGHT / 2, 200, 50)
         exit_button_rect = pygame.Rect(SCREEN_WIDTH / 2 - 100, SCREEN_HEIGHT / 2 + 75, 200, 50)
@@ -462,9 +462,7 @@ class Game:
                     elif event.key == pygame.K_p and self.game_state == 'paused':
                         self.game_state = 'playing'
 
-                # Forward input events to the player when playing so Player handles its own controls
                 if self.game_state == 'playing' and hasattr(self, 'player'):
-                    # Player.handle_event will ignore events it doesn't care about
                     self.player.handle_event(event)
                 
                 if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
@@ -521,9 +519,16 @@ class Game:
                 active_platforms = [p['rect'] for p in self.platforms if p['dim'] in [current_dimension_str, 'both']]
                 
                 self.player.update(active_platforms)
-                # Update enemies
                 for enemy in getattr(self, 'enemies', []):
                     enemy.update(active_platforms)
+
+                # Apply player attack to enemies (40px in front of player)
+                attack_rect = self.player.get_attack_hitbox() if hasattr(self.player, 'get_attack_hitbox') else None
+                if attack_rect:
+                    for enemy in list(getattr(self, 'enemies', [])):
+                        if enemy.is_alive and not getattr(enemy, 'is_dying', False) and attack_rect.colliderect(enemy.rect):
+                            if hasattr(enemy, 'on_killed_by_player'):
+                                enemy.on_killed_by_player()
                 
                 if self.player.is_alive:
                     self.handle_triggers()
@@ -544,6 +549,10 @@ class Game:
                         self.player.hearts = PLAYER_START_HEARTS
                 
                 self.update_animated_traps()
+
+                # Cleanup enemies that finished dying animation
+                now_ms = pygame.time.get_ticks()
+                self.enemies = [e for e in getattr(self, 'enemies', []) if not (getattr(e, 'is_dying', False) and now_ms >= getattr(e, 'remove_at_ms', 0))]
                 
             elif self.game_state == 'paused':
                 pass 
@@ -585,7 +594,6 @@ class Game:
 
             self.draw_campfires(final_offset_x, final_offset_y)
 
-            # Draw enemies
             for enemy in getattr(self, 'enemies', []):
                 enemy.draw(self.game_surface, final_offset_x, final_offset_y)
 
