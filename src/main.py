@@ -1,7 +1,7 @@
 import pygame
 from settings import *
 import assets
-from player import Player
+from entity.player import Player
 from parallax import ParallaxLayer, ParallaxObject
 import os
 
@@ -205,7 +205,8 @@ class Game:
         current_dimension_str = 'gema' if self.player.in_gema_dimension else 'normal'
         for trap in self.trigger_traps:
             if not trap['is_active'] and (trap['dim'] in [current_dimension_str, 'both']):
-                if self.player.rect.colliderect(trap['trigger_rect']): trap['is_active'] = True
+                if self.player.collides(trap['trigger_rect']):
+                    trap['is_active'] = True
 
     def update_animated_traps(self):
         SPIKE_ANIMATION_SPEED = 0.2
@@ -245,14 +246,13 @@ class Game:
             trap['animation_finished'] = False
 
     def handle_damage(self):
-        if self.spawn_invincibility_timer > 0 or not self.player.is_alive or self.is_in_death_delay: return
-        
-        damage_source = None
-        if self.player.rect.top > SCREEN_HEIGHT:
-            damage_source = 'fall'
-            
+        """Build active hazards and delegate damage logic to Player.apply_hazards."""
+        if self.spawn_invincibility_timer > 0 or not self.player.is_alive or self.is_in_death_delay:
+            return
+
         current_dimension_str = 'gema' if self.player.in_gema_dimension else 'normal'
-        
+
+        # Build list of active hazard rectangles based on current dimension and triggers
         active_trap_rects = []
         for t in self.traps:
             if t['dim'] in [current_dimension_str, 'both']:
@@ -260,26 +260,13 @@ class Game:
         for trap in self.trigger_traps:
             if trap['is_active'] and trap['dim'] in [current_dimension_str, 'both']:
                 active_trap_rects.append(trap['trap_rect'])
-        
-        for trap_rect in active_trap_rects:
-            if self.player.rect.colliderect(trap_rect):
-                damage_source = 'trap'
-                break
-                
-        if damage_source:
-            self.player.take_damage()
 
-            if not self.player.is_alive:
-                pass
-            else:
-                self.player.die() 
+        # Delegate to player: it will apply damage and tell us if we need a respawn delay
+        result = self.player.apply_hazards(active_trap_rects, SCREEN_HEIGHT, is_invincible=False)
+        if result:
+            if result.get('temporary_death'):
                 self.is_in_death_delay = True
-                
-                if damage_source == 'fall':
-                    self.death_delay_timer = 500
-                elif damage_source == 'trap':
-                    self.death_delay_timer = 500
-                
+                self.death_delay_timer = result.get('delay_ms', 500)
                 self.death_delay_start_time = pygame.time.get_ticks()
 
     def go_to_next_level(self):
@@ -293,7 +280,7 @@ class Game:
             self.game_state = 'game_over_win'
 
     def check_level_completion(self):
-        if self.player.is_alive and self.door_rect and self.door_rect.contains(self.player.rect):
+        if self.player.is_alive and self.player.is_inside(self.door_rect):
             self.go_to_next_level()
 
     def draw_text(self, text, size, color, x, y, center_aligned=True, shadow_color=None, shadow_offset=3):
@@ -413,11 +400,10 @@ class Game:
                     elif event.key == pygame.K_p and self.game_state == 'paused':
                         self.game_state = 'playing'
 
-                    if self.game_state == 'playing':
-                        if event.key in [pygame.K_SPACE, pygame.K_UP, pygame.K_w]:
-                            self.player.jump()
-                        if event.key in [pygame.K_LSHIFT, pygame.K_RSHIFT]:
-                            self.player.shift_dimension()
+                # Forward input events to the player when playing so Player handles its own controls
+                if self.game_state == 'playing' and hasattr(self, 'player'):
+                    # Player.handle_event will ignore events it doesn't care about
+                    self.player.handle_event(event)
                 
                 if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                     if self.game_state == 'main_menu':
