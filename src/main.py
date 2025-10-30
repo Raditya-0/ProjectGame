@@ -6,6 +6,7 @@ from parallax import ParallaxLayer, ParallaxObject
 from entity.enemy import Enemy
 import os
 from exception import AssetLoadError, LevelFileNotFound, AudioLoadError
+import UI as UI
 
 base_path = os.path.dirname(os.path.abspath(__file__))
 class Game:
@@ -345,92 +346,7 @@ class Game:
         if self.player.is_alive and self.player.is_inside(self.door_rect):
             self.go_to_next_level()
 
-    def draw_text(self, text, size, color, x, y, center_aligned=True, shadow_color=None, shadow_offset=3):
-        font = pygame.font.Font(None, size)
-        
-        text_surface = font.render(text, True, color)
-        text_rect = text_surface.get_rect()
-
-        if shadow_color:
-            shadow_surface = font.render(text, True, shadow_color)
-            shadow_rect = shadow_surface.get_rect()
-            if center_aligned:
-                shadow_rect.center = (x + shadow_offset, y + shadow_offset)
-            else:
-                shadow_rect.topleft = (x + shadow_offset, y + shadow_offset)
-            self.screen.blit(shadow_surface, shadow_rect)
-        
-        if center_aligned:
-            text_rect.center = (x, y)
-        else:
-            text_rect.topleft = (x, y)
-        self.screen.blit(text_surface, text_rect)
-
-    def draw_pause_menu(self):
-        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
-        overlay.fill((0, 0, 0, 150))
-        self.screen.blit(overlay, (0, 0))
-
-        self.draw_text("Paused", 80, (255, 255, 255), SCREEN_WIDTH / 2, SCREEN_HEIGHT / 4, shadow_color=(20, 20, 20))
-
-        self.resume_button = pygame.Rect(SCREEN_WIDTH / 2 - 100, SCREEN_HEIGHT / 2 - 75, 200, 50)
-        self.restart_button = pygame.Rect(SCREEN_WIDTH / 2 - 100, SCREEN_HEIGHT / 2, 200, 50)
-        self.settings_button = pygame.Rect(SCREEN_WIDTH / 2 - 100, SCREEN_HEIGHT / 2 + 75, 200, 50)
-        self.main_menu_button = pygame.Rect(SCREEN_WIDTH / 2 - 100, SCREEN_HEIGHT / 2 + 150, 200, 50)
-
-        buttons = [
-            (self.resume_button, "Lanjutkan"),
-            (self.restart_button, "Ulangi"),
-            (self.settings_button, "Pengaturan"),
-            (self.main_menu_button, "Menu Utama")
-        ]
-        mouse_pos = pygame.mouse.get_pos()
-        for rect, text in buttons:
-            color = (150, 150, 150) if rect.collidepoint(mouse_pos) else (100, 100, 100)
-            pygame.draw.rect(self.screen, color, rect, border_radius=10)
-            self.draw_text(text, 32, (255, 255, 255), rect.centerx, rect.centery)
-
-    def draw_settings_menu(self):
-        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
-        overlay.fill((0, 0, 0, 150))
-        self.screen.blit(overlay, (0, 0))
-
-        self.draw_text("Pengaturan", 60, (255, 255, 255), SCREEN_WIDTH / 2, SCREEN_HEIGHT / 4, shadow_color=(20, 20, 20))
-        
-        self.music_button = pygame.Rect(SCREEN_WIDTH / 2 - 100, SCREEN_HEIGHT / 2, 200, 50)
-        self.back_button = pygame.Rect(SCREEN_WIDTH / 2 - 100, SCREEN_HEIGHT / 2 + 75, 200, 50)
-
-        music_text = "Musik: Off" if self.is_music_paused else "Musik: On"
-        
-        mouse_pos = pygame.mouse.get_pos()
-        music_color = (150, 150, 150) if self.music_button.collidepoint(mouse_pos) else (100, 100, 100)
-        pygame.draw.rect(self.screen, music_color, self.music_button, border_radius=10)
-        self.draw_text(music_text, 32, (255, 255, 255), self.music_button.centerx, self.music_button.centery)
-
-        back_color = (150, 150, 150) if self.back_button.collidepoint(mouse_pos) else (100, 100, 100)
-        pygame.draw.rect(self.screen, back_color, self.back_button, border_radius=10)
-        self.draw_text("Kembali", 32, (255, 255, 255), self.back_button.centerx, self.back_button.centery)
-
-    def draw_win_screen(self):
-        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
-        overlay.fill((0, 0, 0, 180)) 
-        self.screen.blit(overlay, (0, 0))
-        
-        self.draw_text("Selamat! Semua Level Selesai!", 60, (255, 255, 255), SCREEN_WIDTH / 2, SCREEN_HEIGHT / 4)
-
-        self.restart_button = pygame.Rect(SCREEN_WIDTH / 2 - 100, SCREEN_HEIGHT / 2, 200, 50)
-        self.main_menu_button = pygame.Rect(SCREEN_WIDTH / 2 - 100, SCREEN_HEIGHT / 2 + 75, 200, 50)
-
-        buttons = [
-            (self.restart_button, "Restart"),
-            (self.main_menu_button, "Menu Utama")
-        ]
-        
-        mouse_pos = pygame.mouse.get_pos()
-        for rect, text in buttons:
-            color = (150, 150, 150) if rect.collidepoint(mouse_pos) else (100, 100, 100)
-            pygame.draw.rect(self.screen, color, rect, border_radius=10)
-            self.draw_text(text, 32, (255, 255, 255), rect.centerx, rect.centery)
+    
 
     def run(self):
         level_pair = self.levels[self.current_level_index]
@@ -510,6 +426,18 @@ class Game:
                             level_pair = self.levels[self.current_level_index]
                             self.setup_level(level_pair[0], level_pair[1], new_game=True)
                             self.game_state = 'main_menu' 
+                    elif self.game_state == 'game_over':
+                        if self.restart_button.collidepoint(mouse_pos):
+                            self.current_level_index = 0
+                            level_pair = self.levels[self.current_level_index]
+                            self.setup_level(level_pair[0], level_pair[1], new_game=True)
+                            self.player.hearts = PLAYER_START_HEARTS
+                            self.game_state = 'playing'
+                        if self.main_menu_button.collidepoint(mouse_pos):
+                            self.current_level_index = 0
+                            level_pair = self.levels[self.current_level_index]
+                            self.setup_level(level_pair[0], level_pair[1], new_game=True)
+                            self.game_state = 'main_menu'
 
             if self.game_state == 'playing':
                 if self.spawn_invincibility_timer > 0:
@@ -542,11 +470,8 @@ class Game:
                             if current_time - self.death_delay_start_time > self.death_delay_timer:
                                 self.respawn_player()
                     elif self.player.hearts <= 0:
-                        print("Game Over! Kembali ke Level 1...")
-                        self.current_level_index = 0
-                        level_pair = self.levels[self.current_level_index]
-                        self.setup_level(level_pair[0], level_pair[1], new_game=True)
-                        self.player.hearts = PLAYER_START_HEARTS
+                        # Enter game over state; handled by UI with restart/main menu options
+                        self.game_state = 'game_over'
                 
                 self.update_animated_traps()
 
@@ -613,27 +538,29 @@ class Game:
                 if pause_button_rect.collidepoint(mouse_pos):
                     pygame.draw.circle(self.screen, (150, 150, 150), pause_button_rect.center, 20)
                 
-                self.draw_text("||", 32, (255, 255, 255), pause_button_rect.centerx, pause_button_rect.centery, shadow_color=None)
+                UI.draw_text(self, "||", 32, (255, 255, 255), pause_button_rect.centerx, pause_button_rect.centery, shadow_color=None)
             
             if self.game_state == 'main_menu':
-                self.draw_text("Dual Dimension", 80, (255, 255, 255), SCREEN_WIDTH / 2, SCREEN_HEIGHT / 4, shadow_color=(20, 20, 20))
+                UI.draw_text(self, "Dual Dimension", 80, (255, 255, 255), SCREEN_WIDTH / 2, SCREEN_HEIGHT / 4, shadow_color=(20, 20, 20))
                 
                 start_color = (150, 150, 150) if start_button_rect.collidepoint(mouse_pos) else (100, 100, 100)
                 pygame.draw.rect(self.screen, start_color, start_button_rect, border_radius=10)
-                self.draw_text("Mulai", 32, (255, 255, 255), start_button_rect.centerx, start_button_rect.centery)
+                UI.draw_text(self, "Mulai", 32, (255, 255, 255), start_button_rect.centerx, start_button_rect.centery)
                 
                 exit_color = (150, 150, 150) if exit_button_rect.collidepoint(mouse_pos) else (100, 100, 100)
                 pygame.draw.rect(self.screen, exit_color, exit_button_rect, border_radius=10)
-                self.draw_text("Keluar", 32, (255, 255, 255), exit_button_rect.centerx, exit_button_rect.centery)
+                UI.draw_text(self, "Keluar", 32, (255, 255, 255), exit_button_rect.centerx, exit_button_rect.centery)
 
             elif self.game_state == 'paused':
                 if self.is_settings_open:
-                    self.draw_settings_menu()
+                    UI.draw_settings_menu(self)
                 else:
-                    self.draw_pause_menu()
+                    UI.draw_pause_menu(self)
 
             elif self.game_state == 'game_over_win':
-                self.draw_win_screen()
+                UI.draw_win_screen(self)
+            elif self.game_state == 'game_over':
+                UI.draw_game_over_screen(self)
             
             pygame.display.flip()
             self.clock.tick(FPS)
