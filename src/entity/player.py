@@ -13,17 +13,10 @@ class Player(Entity):
         self._load_animations_from_spritesheet()
         initial_image = self.animations['idle'][0]
         super().__init__(x, y, initial_image)
-
-        self.is_on_ground = True
-
+        
+        # Player-specific extra state
         self.hearts = PLAYER_START_HEARTS
         self.in_gema_dimension = False
-
-        self.state = 'idle'
-        self.frame_index = 0
-        self.animation_timer = 0
-
-        self.animation_finished = False
 
     def _load_animations_from_spritesheet(self):
         self.animations = {'idle': [], 'run': [], 'jump': [], 'fall': [], 'death': []}
@@ -136,36 +129,15 @@ class Player(Entity):
                 if self.velocity.y > 0: self.rect.bottom = platform.top; self.velocity.y = 0; self.is_on_ground = True
                 elif self.velocity.y < 0: self.rect.top = platform.bottom; self.velocity.y = 0
 
-    def _update_animation_state(self):
+    def compute_state(self) -> str:
+        # Decide animation state based on physics and intent
         if not self.is_alive:
-            self.state = 'death'
-            return
-        
+            return 'death'
         if not self.is_on_ground:
-            if self.velocity.y < 0: self.state = 'jump'
-            else: self.state = 'fall'
-        elif self.is_walking: self.state = 'run'
-        else: self.state = 'idle'
+            return 'jump' if self.velocity.y < 0 else 'fall'
+        return 'run' if getattr(self, 'is_walking', False) else 'idle'
 
-    def _animate(self):
-        self._update_animation_state()
-        self.animation_timer += 1
-        
-        if self.animation_timer > ANIMATION_SPEED:
-            self.animation_timer = 0
-            current_animation = self.animations[self.state]
-            
-            if self.state == 'death':
-                if self.frame_index < len(current_animation) - 1:
-                    self.frame_index += 1
-                else:
-                    self.animation_finished = True 
-            else: 
-                if len(current_animation) > 0: 
-                    self.frame_index = (self.frame_index + 1) % len(current_animation)
-            
-            if len(current_animation) > 0:
-                self.image = current_animation[self.frame_index]
+    # Animation is handled by Entity.animate(); 'death' is non-looping by default
 
     def jump(self):
         if self.is_on_ground and self.is_alive: self.velocity.y = -JUMP_STRENGTH
@@ -206,8 +178,7 @@ class Player(Entity):
     def update(self, platforms):
         # Read input first, then apply physics, then animate. This keeps input responsive.
         self._get_input()
-        self._apply_physics(platforms)
-        self._animate()
+        self.step(platforms)
 
     def handle_event(self, event):
         """Handle incoming pygame events relevant for the player.
