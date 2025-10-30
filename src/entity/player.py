@@ -1,29 +1,22 @@
 import os
 import pygame
 from settings import *
+from entity.entity import Entity
 
 base_path = os.path.dirname(os.path.abspath(__file__))
-assets_path = os.path.join(base_path, '..', 'Assets')
+# entity/player.py is under src/entity, while Assets/ is at the repo root alongside src/
+project_root = os.path.abspath(os.path.join(base_path, '..', '..'))
+assets_path = os.path.join(project_root, 'Assets')
 
-class Player:
+class Player(Entity):
     def __init__(self, x, y):
         self._load_animations_from_spritesheet()
-        self.image = self.animations['idle'][0]
-        self.rect = self.image.get_rect(bottomleft=(x, y))
-
-        self.velocity = pygame.math.Vector2(0, 0)
-        self.is_on_ground = True
+        initial_image = self.animations['idle'][0]
+        super().__init__(x, y, initial_image)
         
+        # Player-specific extra state
         self.hearts = PLAYER_START_HEARTS
         self.in_gema_dimension = False
-        self.direction = 1 
-        
-        self.state = 'idle'
-        self.frame_index = 0
-        self.animation_timer = 0
-        
-        self.is_alive = True
-        self.animation_finished = False
 
     def _load_animations_from_spritesheet(self):
         self.animations = {'idle': [], 'run': [], 'jump': [], 'fall': [], 'death': []}
@@ -136,36 +129,15 @@ class Player:
                 if self.velocity.y > 0: self.rect.bottom = platform.top; self.velocity.y = 0; self.is_on_ground = True
                 elif self.velocity.y < 0: self.rect.top = platform.bottom; self.velocity.y = 0
 
-    def _update_animation_state(self):
+    def compute_state(self) -> str:
+        # Decide animation state based on physics and intent
         if not self.is_alive:
-            self.state = 'death'
-            return
-        
+            return 'death'
         if not self.is_on_ground:
-            if self.velocity.y < 0: self.state = 'jump'
-            else: self.state = 'fall'
-        elif self.is_walking: self.state = 'run'
-        else: self.state = 'idle'
+            return 'jump' if self.velocity.y < 0 else 'fall'
+        return 'run' if getattr(self, 'is_walking', False) else 'idle'
 
-    def _animate(self):
-        self._update_animation_state()
-        self.animation_timer += 1
-        
-        if self.animation_timer > ANIMATION_SPEED:
-            self.animation_timer = 0
-            current_animation = self.animations[self.state]
-            
-            if self.state == 'death':
-                if self.frame_index < len(current_animation) - 1:
-                    self.frame_index += 1
-                else:
-                    self.animation_finished = True 
-            else: 
-                if len(current_animation) > 0: 
-                    self.frame_index = (self.frame_index + 1) % len(current_animation)
-            
-            if len(current_animation) > 0:
-                self.image = current_animation[self.frame_index]
+    # Animation is handled by Entity.animate(); 'death' is non-looping by default
 
     def jump(self):
         if self.is_on_ground and self.is_alive: self.velocity.y = -JUMP_STRENGTH
@@ -204,11 +176,61 @@ class Player:
             self.hearts = PLAYER_START_HEARTS
 
     def update(self, platforms):
-        self._apply_physics(platforms)
+        # Read input first, then apply physics, then animate. This keeps input responsive.
         self._get_input()
-        self._animate()
+        self.step(platforms)
 
-    def draw(self, screen, camera_offset_x, camera_offset_y):
-        final_image = self.image
-        if self.direction == -1: final_image = pygame.transform.flip(self.image, True, False)
-        screen.blit(final_image, (self.rect.x - camera_offset_x, self.rect.y - camera_offset_y))
+    def handle_event(self, event):
+        """Handle incoming pygame events relevant for the player.
+
+        This keeps per-player input handling inside the Player class and allows
+        `main.py` to be focused on game flow.
+        """
+        if not self.is_alive: return
+
+        if event.type == pygame.KEYDOWN:
+            if event.key in [pygame.K_SPACE, pygame.K_UP, pygame.K_w]:
+                self.jump()
+            if event.key in [pygame.K_LSHIFT, pygame.K_RSHIFT]:
+                self.shift_dimension()
+
+    def apply_hazards(self, hazard_rects, fall_limit_y, is_invincible=False):
+        """Check and apply damage from environment hazards.
+
+        Inputs:
+        - hazard_rects: iterable of pygame.Rect that can damage the player
+        - fall_limit_y: y threshold beyond which falling counts as damage
+        - is_invincible: if True, ignores incoming damage (e.g., spawn i-frames)
+
+        Returns a dict when damage was applied, else None. Example:
+        { 'source': 'trap'|'fall', 'temporary_death': True|False, 'delay_ms': int }
+        temporary_death=True means hearts remain but we play death anim + respawn delay.
+        """
+        if is_invincible or not self.is_alive:
+            return None
+
+        damage_source = None
+        # Fall off-screen check
+        if self.rect.top > fall_limit_y:
+            damage_source = 'fall'
+        else:
+            # Trap collision check
+            for r in hazard_rects:
+                if self.rect.colliderect(r):
+                    damage_source = 'trap'
+                    break
+
+        if not damage_source:
+            return None
+
+        # Apply damage and decide death behavior
+        self.take_damage()
+
+        if not self.is_alive:
+            # Hearts <= 0 inside take_damage() already called die()
+            return {'source': damage_source, 'temporary_death': False, 'delay_ms': 0}
+
+        # Temporary death: play death animation and request respawn delay
+        self.die()
+        delay_ms = 500 if damage_source in ('fall', 'trap') else 500
+        return {'source': damage_source, 'temporary_death': True, 'delay_ms': delay_ms}

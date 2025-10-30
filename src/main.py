@@ -1,8 +1,9 @@
 import pygame
 from settings import *
 import assets
-from player import Player
+from entity.player import Player
 from parallax import ParallaxLayer, ParallaxObject
+from entity.enemy import Enemy
 import os
 
 base_path = os.path.dirname(os.path.abspath(__file__))
@@ -104,6 +105,7 @@ class Game:
             self.trigger_traps = []
             self.door_rect = None
             self.campfires = []
+            self.enemies = []
 
         tile_size = 40
 
@@ -111,6 +113,11 @@ class Game:
         trap_zones_pos = {'normal': [], 'gema': []}
 
         try:
+            # Collect patrol markers and enemy spawns for normal map
+            left_markers_normal = {}
+            right_markers_normal = {}
+            enemy_spawns_normal = []
+
             with open(normal_map_file, 'r') as file:
                 for y, line in enumerate(file):
                     for x, char in enumerate(line):
@@ -129,11 +136,22 @@ class Game:
                             self.start_pos = (world_x, world_y + tile_size)
                         elif char in 'Dd':
                             self.door_rect = pygame.Rect(world_x, world_y, tile_size, tile_size * 1)
+                        elif char in 'eE':
+                            enemy_spawns_normal.append(rect)
+                        elif char in 'lL':
+                            left_markers_normal.setdefault(y, []).append(world_x + tile_size // 2)
+                        elif char in 'rR':
+                            right_markers_normal.setdefault(y, []).append(world_x + tile_size // 2)
         except FileNotFoundError:
             print(f"Error: File '{normal_map_file}' tidak ditemukan!")
             self.running = False; return
 
         try:
+            # Collect platforms/traps for gema, and also accept enemy markers in gema
+            left_markers_gema = {}
+            right_markers_gema = {}
+            enemy_spawns_gema = []
+
             with open(gema_map_file, 'r') as file:
                 for y, line in enumerate(file):
                     for x, char in enumerate(line):
@@ -151,9 +169,43 @@ class Game:
                                 'rect': rect,
                                 'frame_index': 0.0,
                             })
+                        elif char in 'eE':
+                            enemy_spawns_gema.append(rect)
+                        elif char in 'lL':
+                            left_markers_gema.setdefault(y, []).append(world_x + tile_size // 2)
+                        elif char in 'rR':
+                            right_markers_gema.setdefault(y, []).append(world_x + tile_size // 2)
         except FileNotFoundError:
             print(f"Error: File '{gema_map_file}' tidak ditemukan!")
             self.running = False; return
+
+        # Build enemies from markers found in BOTH maps. If markers are placed in gema,
+        # also spawn them (so enemies exist regardless of which map they were defined in).
+        # Deduplicate by tile position to avoid double-instantiation.
+        seen_spawn_tiles = set()
+
+        def add_enemies_from(spawn_list, left_markers, right_markers):
+            for spawn_rect in spawn_list:
+                row = spawn_rect.y // tile_size
+                col = spawn_rect.x // tile_size
+                key = (row, col)
+                if key in seen_spawn_tiles:
+                    continue
+                seen_spawn_tiles.add(key)
+
+                left_list = left_markers.get(row, [])
+                right_list = right_markers.get(row, [])
+
+                # Find nearest left <= spawn_x and nearest right >= spawn_x
+                sx = spawn_rect.centerx
+                left_bound = max([lx for lx in left_list if lx <= sx], default=sx - 80)
+                right_bound = min([rx for rx in right_list if rx >= sx], default=sx + 80)
+
+                enemy = Enemy(spawn_rect.x, spawn_rect.bottom, left_bound, right_bound, size=(30, 30), speed=2.0)
+                self.enemies.append(enemy)
+
+        add_enemies_from(enemy_spawns_normal, left_markers_normal, right_markers_normal)
+        add_enemies_from(enemy_spawns_gema, left_markers_gema, right_markers_gema)
         
         for trigger_rect, trap_rect in zip(triggers_pos['normal'], trap_zones_pos['normal']):
             self.trigger_traps.append({
@@ -205,7 +257,8 @@ class Game:
         current_dimension_str = 'gema' if self.player.in_gema_dimension else 'normal'
         for trap in self.trigger_traps:
             if not trap['is_active'] and (trap['dim'] in [current_dimension_str, 'both']):
-                if self.player.rect.colliderect(trap['trigger_rect']): trap['is_active'] = True
+                if self.player.collides(trap['trigger_rect']):
+                    trap['is_active'] = True
 
     def update_animated_traps(self):
         SPIKE_ANIMATION_SPEED = 0.2
@@ -243,16 +296,19 @@ class Game:
             trap['is_active'] = False
             trap['frame_index'] = 0.0
             trap['animation_finished'] = False
+        # Clear enemy idle lock so they resume patrol after player respawns
+        for enemy in getattr(self, 'enemies', []):
+            if hasattr(enemy, 'clear_contact_idle'):
+                enemy.clear_contact_idle()
 
     def handle_damage(self):
-        if self.spawn_invincibility_timer > 0 or not self.player.is_alive or self.is_in_death_delay: return
-        
-        damage_source = None
-        if self.player.rect.top > SCREEN_HEIGHT:
-            damage_source = 'fall'
-            
+        """Build active hazards and delegate damage logic to Player.apply_hazards."""
+        if self.spawn_invincibility_timer > 0 or not self.player.is_alive or self.is_in_death_delay:
+            return
+
         current_dimension_str = 'gema' if self.player.in_gema_dimension else 'normal'
-        
+
+        # Build list of active hazard rectangles based on current dimension and triggers
         active_trap_rects = []
         for t in self.traps:
             if t['dim'] in [current_dimension_str, 'both']:
@@ -260,26 +316,19 @@ class Game:
         for trap in self.trigger_traps:
             if trap['is_active'] and trap['dim'] in [current_dimension_str, 'both']:
                 active_trap_rects.append(trap['trap_rect'])
-        
-        for trap_rect in active_trap_rects:
-            if self.player.rect.colliderect(trap_rect):
-                damage_source = 'trap'
-                break
-                
-        if damage_source:
-            self.player.take_damage()
+        # Enemies act as hazards too; if player collides, trigger enemy idle reaction
+        for enemy in getattr(self, 'enemies', []):
+            if self.player.rect.colliderect(enemy.rect):
+                if hasattr(enemy, 'on_player_contact'):
+                    enemy.on_player_contact()
+            active_trap_rects.append(enemy.rect)
 
-            if not self.player.is_alive:
-                pass
-            else:
-                self.player.die() 
+        # Delegate to player: it will apply damage and tell us if we need a respawn delay
+        result = self.player.apply_hazards(active_trap_rects, SCREEN_HEIGHT, is_invincible=False)
+        if result:
+            if result.get('temporary_death'):
                 self.is_in_death_delay = True
-                
-                if damage_source == 'fall':
-                    self.death_delay_timer = 500
-                elif damage_source == 'trap':
-                    self.death_delay_timer = 500
-                
+                self.death_delay_timer = result.get('delay_ms', 500)
                 self.death_delay_start_time = pygame.time.get_ticks()
 
     def go_to_next_level(self):
@@ -293,7 +342,7 @@ class Game:
             self.game_state = 'game_over_win'
 
     def check_level_completion(self):
-        if self.player.is_alive and self.door_rect and self.door_rect.contains(self.player.rect):
+        if self.player.is_alive and self.player.is_inside(self.door_rect):
             self.go_to_next_level()
 
     def draw_text(self, text, size, color, x, y, center_aligned=True, shadow_color=None, shadow_offset=3):
@@ -413,11 +462,10 @@ class Game:
                     elif event.key == pygame.K_p and self.game_state == 'paused':
                         self.game_state = 'playing'
 
-                    if self.game_state == 'playing':
-                        if event.key in [pygame.K_SPACE, pygame.K_UP, pygame.K_w]:
-                            self.player.jump()
-                        if event.key in [pygame.K_LSHIFT, pygame.K_RSHIFT]:
-                            self.player.shift_dimension()
+                # Forward input events to the player when playing so Player handles its own controls
+                if self.game_state == 'playing' and hasattr(self, 'player'):
+                    # Player.handle_event will ignore events it doesn't care about
+                    self.player.handle_event(event)
                 
                 if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                     if self.game_state == 'main_menu':
@@ -473,6 +521,9 @@ class Game:
                 active_platforms = [p['rect'] for p in self.platforms if p['dim'] in [current_dimension_str, 'both']]
                 
                 self.player.update(active_platforms)
+                # Update enemies
+                for enemy in getattr(self, 'enemies', []):
+                    enemy.update(active_platforms)
                 
                 if self.player.is_alive:
                     self.handle_triggers()
@@ -533,6 +584,10 @@ class Game:
                     self.game_surface.blit(scaled_image, (trap['trap_rect'].x - final_offset_x, draw_y - final_offset_y))
 
             self.draw_campfires(final_offset_x, final_offset_y)
+
+            # Draw enemies
+            for enemy in getattr(self, 'enemies', []):
+                enemy.draw(self.game_surface, final_offset_x, final_offset_y)
 
             if self.door_rect:
                 door_surf = assets.create_door_surface(self.door_rect.width, self.door_rect.height)
