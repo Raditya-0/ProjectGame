@@ -296,6 +296,10 @@ class Game:
             trap['is_active'] = False
             trap['frame_index'] = 0.0
             trap['animation_finished'] = False
+        # Clear enemy idle lock so they resume patrol after player respawns
+        for enemy in getattr(self, 'enemies', []):
+            if hasattr(enemy, 'clear_contact_idle'):
+                enemy.clear_contact_idle()
 
     def handle_damage(self):
         """Build active hazards and delegate damage logic to Player.apply_hazards."""
@@ -312,8 +316,11 @@ class Game:
         for trap in self.trigger_traps:
             if trap['is_active'] and trap['dim'] in [current_dimension_str, 'both']:
                 active_trap_rects.append(trap['trap_rect'])
-        # Enemies act as hazards too
+        # Enemies act as hazards too; if player collides, trigger enemy idle reaction
         for enemy in getattr(self, 'enemies', []):
+            if self.player.rect.colliderect(enemy.rect):
+                if hasattr(enemy, 'on_player_contact'):
+                    enemy.on_player_contact()
             active_trap_rects.append(enemy.rect)
 
         # Delegate to player: it will apply damage and tell us if we need a respawn delay
