@@ -45,6 +45,18 @@ class Game:
         self.is_music_paused = False
         self.is_settings_open = False
 
+        # End-of-level sequence and camera lock
+        self.end_triggers = []  # list of {rect, dim, mode}
+        self.end_sequence_active = False
+        self.end_sequence_mode = None  # 'walk' | 'jump_walk'
+        self.end_sequence_dir = 1
+        self.end_jump_started = False
+        self.input_locked = False
+        self.camera_lock_active = False
+        self.camera_lock_center_x = 0
+        self.camera_right_limit_x = None  # optional 'k' bound (world x of center)
+        self.level_width_pixels = 0
+
     def load_assets(self):
         assets_path = os.path.join(base_path, '..', 'Assets')
         self.heart_icon = assets.create_heart_surface()
@@ -105,10 +117,13 @@ class Game:
             self.platforms = []
             self.traps = []
             self.trigger_traps = []
-            self.door_rect = None
+            self.end_triggers = []
+            self.door_rect = None  # kept for backward compat, unused now
             self.campfires = []
             self.enemies = []
             self.enemy_spawns = []  # store spawn definitions for respawn
+            self.camera_right_limit_x = None
+            self.level_width_pixels = 0
 
         tile_size = 40
 
@@ -119,31 +134,41 @@ class Game:
             left_markers_normal = {}
             right_markers_normal = {}
             enemy_spawns_normal = []
+            max_world_x = 0
 
             with open(normal_map_file, 'r') as file:
                 for y, line in enumerate(file):
                     for x, char in enumerate(line):
                         world_x, world_y = x * tile_size, y * tile_size
                         rect = pygame.Rect(world_x, world_y, tile_size, tile_size)
+                        if world_x > max_world_x:
+                            max_world_x = world_x
 
                         if char in 'Gg':
                             self.platforms.append({'rect': rect, 'dim': 'both', 'char': 'G'})
                         elif char in 'Pp':
-                            self.platforms.append({'rect': rect, 'dim': 'normal', 'char': 'P'})
+                            plat_rect = pygame.Rect(world_x, world_y, tile_size, 20)
+                            self.platforms.append({'rect': plat_rect, 'dim': 'normal', 'char': 'P'})
                         elif char in 'Tt':
                             triggers_pos['normal'].append(rect)
                         elif char in 'jJ':
                             trap_zones_pos['normal'].append(rect)
                         elif char in 'Ss':
                             self.start_pos = (world_x, world_y + tile_size)
-                        elif char in 'Dd':
-                            self.door_rect = pygame.Rect(world_x, world_y, tile_size, tile_size * 1)
+                        elif char == 'D':
+                            self.end_triggers.append({'rect': rect, 'dim': 'normal', 'mode': 'jump_walk'})
+                        elif char == 'd':
+                            self.end_triggers.append({'rect': rect, 'dim': 'normal', 'mode': 'walk'})
                         elif char in 'eE':
                             enemy_spawns_normal.append(rect)
                         elif char in 'lL':
                             left_markers_normal.setdefault(y, []).append(world_x + tile_size // 2)
                         elif char in 'rR':
                             right_markers_normal.setdefault(y, []).append(world_x + tile_size // 2)
+                        elif char in 'Kk':
+                            # Optional camera right bound; use center of this tile
+                            self.camera_right_limit_x = world_x + tile_size // 2
+            self.level_width_pixels = max(self.level_width_pixels, max_world_x + tile_size)
         except FileNotFoundError:
             print(str(LevelFileNotFound(normal_map_file)))
             self.running = False; return
@@ -152,15 +177,21 @@ class Game:
             left_markers_gema = {}
             right_markers_gema = {}
             enemy_spawns_gema = []
+            max_world_x_gema = 0
 
             with open(gema_map_file, 'r') as file:
                 for y, line in enumerate(file):
                     for x, char in enumerate(line):
                         world_x, world_y = x * tile_size, y * tile_size
                         rect = pygame.Rect(world_x, world_y, tile_size, tile_size)
-                        
-                        if char in 'GPp':
-                           self.platforms.append({'rect': rect, 'dim': 'gema', 'char': 'P'})
+                        if world_x > max_world_x_gema:
+                            max_world_x_gema = world_x
+
+                        if char in 'Gg':
+                            self.platforms.append({'rect': rect, 'dim': 'gema', 'char': 'G'})
+                        elif char in 'Pp':
+                            plat_rect = pygame.Rect(world_x, world_y, tile_size, 20)
+                            self.platforms.append({'rect': plat_rect, 'dim': 'gema', 'char': 'P'})
                         elif char in 'Tt':
                             triggers_pos['gema'].append(rect)
                         elif char in 'jJ':
@@ -170,12 +201,19 @@ class Game:
                                 'rect': rect,
                                 'frame_index': 0.0,
                             })
+                        elif char == 'D':
+                            self.end_triggers.append({'rect': rect, 'dim': 'gema', 'mode': 'jump_walk'})
+                        elif char == 'd':
+                            self.end_triggers.append({'rect': rect, 'dim': 'gema', 'mode': 'walk'})
                         elif char in 'eE':
                             enemy_spawns_gema.append(rect)
                         elif char in 'lL':
                             left_markers_gema.setdefault(y, []).append(world_x + tile_size // 2)
                         elif char in 'rR':
                             right_markers_gema.setdefault(y, []).append(world_x + tile_size // 2)
+                        elif char in 'Kk':
+                            self.camera_right_limit_x = world_x + tile_size // 2
+            self.level_width_pixels = max(self.level_width_pixels, max_world_x_gema + tile_size)
         except FileNotFoundError:
             print(str(LevelFileNotFound(gema_map_file)))
             self.running = False; return
@@ -262,6 +300,13 @@ class Game:
                 if self.player.collides(trap['trigger_rect']):
                     trap['is_active'] = True
 
+        # End-of-level triggers
+        if not self.end_sequence_active:
+            for end_t in self.end_triggers:
+                if end_t['dim'] in [current_dimension_str, 'both'] and self.player.collides(end_t['rect']):
+                    self.start_end_sequence(end_t['mode'])
+                    break
+
     def update_animated_traps(self):
         SPIKE_ANIMATION_SPEED = 0.2
         for trap in self.trigger_traps:
@@ -343,8 +388,19 @@ class Game:
             self.game_state = 'game_over_win'
 
     def check_level_completion(self):
-        if self.player.is_alive and self.player.is_inside(self.door_rect):
-            self.go_to_next_level()
+        # Doorless: completion handled by end-sequence auto walk/jump
+        pass
+
+    def start_end_sequence(self, mode: str):
+        # Lock input and camera, start auto movement
+        self.end_sequence_active = True
+        self.end_sequence_mode = 'jump_walk' if mode == 'jump_walk' else 'walk'
+        # Default direction: go right; if trigger is on the left of player, go left
+        self.end_sequence_dir = 1
+        self.end_jump_started = False
+        self.input_locked = True
+        self.camera_lock_active = True
+        self.camera_lock_center_x = self.player.rect.centerx
 
     
 
@@ -378,7 +434,7 @@ class Game:
                     elif event.key == pygame.K_p and self.game_state == 'paused':
                         self.game_state = 'playing'
 
-                if self.game_state == 'playing' and hasattr(self, 'player'):
+                if self.game_state == 'playing' and hasattr(self, 'player') and not self.input_locked:
                     self.player.handle_event(event)
                 
                 if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
@@ -446,22 +502,35 @@ class Game:
                 current_dimension_str = 'gema' if self.player.in_gema_dimension else 'normal'
                 active_platforms = [p['rect'] for p in self.platforms if p['dim'] in [current_dimension_str, 'both']]
                 
-                self.player.update(active_platforms)
+                if self.end_sequence_active:
+                    # Auto control: set horizontal motion and optional jump
+                    self.player.is_walking = True
+                    self.player.direction = 1 if self.end_sequence_dir >= 0 else -1
+                    self.player.velocity.x = PLAYER_SPEED * 0.8 * self.player.direction
+                    if self.end_sequence_mode == 'jump_walk' and not self.end_jump_started and getattr(self.player, 'is_on_ground', False):
+                        self.player.velocity.y = -JUMP_STRENGTH * 0.6
+                        self.end_jump_started = True
+                    self.player.step(active_platforms)
+                else:
+                    self.player.update(active_platforms)
                 for enemy in getattr(self, 'enemies', []):
                     enemy.update(active_platforms)
 
                 # Apply player attack to enemies (40px in front of player)
-                attack_rect = self.player.get_attack_hitbox() if hasattr(self.player, 'get_attack_hitbox') else None
-                if attack_rect:
-                    for enemy in list(getattr(self, 'enemies', [])):
-                        if enemy.is_alive and not getattr(enemy, 'is_dying', False) and attack_rect.colliderect(enemy.rect):
-                            if hasattr(enemy, 'on_killed_by_player'):
-                                enemy.on_killed_by_player()
+                if not self.end_sequence_active:
+                    attack_rect = self.player.get_attack_hitbox() if hasattr(self.player, 'get_attack_hitbox') else None
+                    if attack_rect:
+                        for enemy in list(getattr(self, 'enemies', [])):
+                            if enemy.is_alive and not getattr(enemy, 'is_dying', False) and attack_rect.colliderect(enemy.rect):
+                                if hasattr(enemy, 'on_killed_by_player'):
+                                    enemy.on_killed_by_player()
                 
                 if self.player.is_alive:
+                    # Triggers include end sequence start
                     self.handle_triggers()
-                    self.handle_damage()
-                    self.check_level_completion()
+                    if not self.end_sequence_active:
+                        self.handle_damage()
+                    # completion is handled by sequence end
                 else: 
                     if self.is_in_death_delay:
                         is_ready_for_delay = (self.player.state == 'death' and self.player.animation_finished) or (self.player.state != 'death')
@@ -482,7 +551,15 @@ class Game:
             elif self.game_state == 'paused':
                 pass 
 
-            camera_offset_x = self.player.rect.centerx - self.game_surface_width / 2
+            if self.camera_lock_active:
+                camera_offset_x = self.camera_lock_center_x - self.game_surface_width / 2
+            else:
+                camera_offset_x = self.player.rect.centerx - self.game_surface_width / 2
+            # Apply optional camera right bound ('k' tile)
+            if self.camera_right_limit_x is not None:
+                max_offset = self.camera_right_limit_x - self.game_surface_width / 2
+                if camera_offset_x > max_offset:
+                    camera_offset_x = max_offset
             camera_offset_y = CAMERA_MANUAL_OFFSET_Y
             final_offset_x = camera_offset_x + CAMERA_MANUAL_OFFSET_X
             final_offset_y = camera_offset_y
@@ -522,13 +599,21 @@ class Game:
             for enemy in getattr(self, 'enemies', []):
                 enemy.draw(self.game_surface, final_offset_x, final_offset_y)
 
-            if self.door_rect:
-                door_surf = assets.create_door_surface(self.door_rect.width, self.door_rect.height)
-                self.game_surface.blit(door_surf, (self.door_rect.x - final_offset_x, self.door_rect.y - final_offset_y))
+            # Door removed: level ends via end triggers
             
             self.player.draw(self.game_surface, final_offset_x, final_offset_y)
             
             self.screen.blit(pygame.transform.scale(self.game_surface, self.screen.get_size()), (0, 0))
+
+            # If in end sequence, check if player has exited the camera view; then go to next level
+            if self.game_state == 'playing' and self.end_sequence_active:
+                player_screen_x = self.player.rect.x - final_offset_x
+                if player_screen_x > self.game_surface_width + 40 or player_screen_x + self.player.rect.width < -40 or self.player.rect.left > self.level_width_pixels + 40:
+                    # Sequence complete
+                    self.end_sequence_active = False
+                    self.input_locked = False
+                    self.camera_lock_active = False
+                    self.go_to_next_level()
 
             if self.game_state == 'playing' or self.game_state == 'paused':
                 for i in range(self.player.hearts):
