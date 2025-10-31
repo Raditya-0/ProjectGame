@@ -4,6 +4,8 @@ import assets
 from entity.player import Player
 from parallax import ParallaxLayer, ParallaxObject
 from entity.enemy import PatrollingEnemy, ChaserEnemy
+from environment.trap import load_spike_frames, TriggerTrap
+from environment.campfire import load_campfire_frames, Campfire
 import os
 from exception import AssetLoadError, LevelFileNotFound, AudioLoadError
 import UI as UI
@@ -24,7 +26,7 @@ class Game:
         self.game_state = 'main_menu'
         self.prev_game_state = 'main_menu'
         
-        self.spike_animation_frames = []
+        self.spike_frames = []
         self.parallax_layers = []
         
         self.levels = [
@@ -69,19 +71,8 @@ class Game:
             print(str(AssetLoadError("Tiles (ground/platform)", e)))
             self.running = False
 
-        try:
-            spike_sheet = pygame.image.load(os.path.join(assets_path, 'Tiles', 'spike_animation.png')).convert_alpha()
-            frame_width, frame_height, frame_count = 40, 40, 4
-            left_margin, gap_width, top_margin = 0, 0, 0
-            for i in range(frame_count):
-                x_pos = left_margin + i * (frame_width + gap_width)
-                y_pos = top_margin
-                frame_surface = pygame.Surface((frame_width, frame_height), pygame.SRCALPHA)
-                frame_surface.blit(spike_sheet, (0, 0), (x_pos, y_pos, frame_width, frame_height))
-                self.spike_animation_frames.append(frame_surface)
-        except pygame.error as e:
-            print(str(AssetLoadError("Tiles spike_animation.png", e)))
-            self.running = False
+        # Load spike frames via environment helper
+        self.spike_frames = load_spike_frames(assets_path)
 
         self.forest_layers_images = []
         try:
@@ -101,15 +92,8 @@ class Game:
             print(str(AssetLoadError("Background moon/moon_shadow", e)))
             self.running = False
 
-        self.campfire_animation_frames = []
-        try:
-            for i in range(1, 8):
-                path = os.path.join(assets_path, 'Background', 'Campfire', f'campFire{i}.png')
-                image = pygame.image.load(path).convert_alpha()
-                self.campfire_animation_frames.append(image)
-        except pygame.error as e:
-            print(str(AssetLoadError("Background Campfire frames", e)))
-            self.running = False
+        # Load campfire frames via environment helper
+        self.campfire_frames = load_campfire_frames(assets_path)
 
 
     def setup_level(self, normal_map_file, gema_map_file, new_game=False):
@@ -154,7 +138,12 @@ class Game:
                             enemy_spawns_normal.append({'rect': rect, 'type': 'patrol', 'facing': facing})
                         elif char in 'Tt':
                             triggers_pos['normal'].append(rect)
+                        elif char in 'Nn':
+                            facing = 'right' if char == 'N' else 'left'
+                            enemy_spawns_normal.append({'rect': rect, 'type': 'chaser_heavy', 'facing': facing})
                         elif char in 'jJ':
+                            trap_zones_pos['normal'].append(rect)
+                        elif char in 'yY':
                             trap_zones_pos['normal'].append(rect)
                         elif char in 'Ss':
                             self.start_pos = (world_x, world_y + tile_size)
@@ -163,7 +152,7 @@ class Game:
                         elif char == 'd':
                             self.end_triggers.append({'rect': rect, 'dim': 'normal', 'mode': 'walk'})
                         elif char in 'Cc':
-                            self.campfires.append({'rect': rect, 'frame_index': 0.0})
+                            self.campfires.append(Campfire(rect))
                         elif char in 'Ff':
                             facing = 'right' if char == 'F' else 'left'
                             enemy_spawns_normal.append({'rect': rect, 'type': 'chaser', 'facing': facing})
@@ -171,7 +160,7 @@ class Game:
                             left_markers_normal.setdefault(y, []).append(world_x + tile_size // 2)
                         elif char in 'rR':
                             right_markers_normal.setdefault(y, []).append(world_x + tile_size // 2)
-                        elif char in 'Kk':
+                        elif char == 'K':
                             self.camera_right_limit_x = world_x + tile_size // 2
             self.level_width_pixels = max(self.level_width_pixels, max_world_x + tile_size)
         except FileNotFoundError:
@@ -202,10 +191,15 @@ class Game:
                             enemy_spawns_gema.append({'rect': rect, 'type': 'patrol', 'facing': facing})
                         elif char in 'Tt':
                             triggers_pos['gema'].append(rect)
+                        elif char in 'Nn':
+                            facing = 'right' if char == 'N' else 'left'
+                            enemy_spawns_gema.append({'rect': rect, 'type': 'chaser_heavy', 'facing': facing})
                         elif char in 'jJ':
                             trap_zones_pos['gema'].append(rect)
+                        elif char in 'yY':
+                            trap_zones_pos['gema'].append(rect)
                         elif char in 'Cc':
-                            self.campfires.append({'rect': rect, 'frame_index': 0.0})
+                            self.campfires.append(Campfire(rect))
                         elif char in 'Ff':
                             facing = 'right' if char == 'F' else 'left'
                             enemy_spawns_gema.append({'rect': rect, 'type': 'chaser', 'facing': facing})
@@ -217,7 +211,7 @@ class Game:
                             left_markers_gema.setdefault(y, []).append(world_x + tile_size // 2)
                         elif char in 'rR':
                             right_markers_gema.setdefault(y, []).append(world_x + tile_size // 2)
-                        elif char in 'Kk':
+                        elif char == 'K':
                             self.camera_right_limit_x = world_x + tile_size // 2
             self.level_width_pixels = max(self.level_width_pixels, max_world_x_gema + tile_size)
         except FileNotFoundError:
@@ -259,8 +253,10 @@ class Game:
                 facing = stored['facing']
                 if etype == 'chaser':
                     enemy = ChaserEnemy(spawn_rect.x, spawn_rect.bottom, size=(50, 50), speed=2.5, facing=facing)
+                elif etype == 'chaser_heavy':
+                    enemy = ChaserEnemy(spawn_rect.x, spawn_rect.bottom, size=(50, 50), speed=2.2, facing=facing, asset_folder='Heavy Bandit')
                 else:
-                    enemy = PatrollingEnemy(spawn_rect.x, spawn_rect.bottom, left_bound, right_bound, size=(50, 50), speed=2.0)
+                    enemy = PatrollingEnemy(spawn_rect.x, spawn_rect.bottom, left_bound, right_bound, size=(30, 30), speed=2.0)
                     enemy.direction = 1 if facing == 'right' else -1
                 self.enemies.append(enemy)
 
@@ -268,18 +264,10 @@ class Game:
         add_enemies_from(enemy_spawns_gema, left_markers_gema, right_markers_gema)
         
         for trigger_rect, trap_rect in zip(triggers_pos['normal'], trap_zones_pos['normal']):
-            self.trigger_traps.append({
-                'trigger_rect': trigger_rect, 'trap_rect': trap_rect, 
-                'dim': 'normal', 'is_active': False, 
-                'frame_index': 0.0, 'animation_finished': False
-            })
+            self.trigger_traps.append(TriggerTrap(trigger_rect, trap_rect, dim='normal'))
         
         for trigger_rect, trap_rect in zip(triggers_pos['gema'], trap_zones_pos['gema']):
-            self.trigger_traps.append({
-                'trigger_rect': trigger_rect, 'trap_rect': trap_rect, 
-                'dim': 'gema', 'is_active': False, 
-                'frame_index': 0.0, 'animation_finished': False
-            })
+            self.trigger_traps.append(TriggerTrap(trigger_rect, trap_rect, dim='gema'))
 
         if new_game or not hasattr(self, 'player'):
             if hasattr(self, 'start_pos'):
@@ -316,9 +304,7 @@ class Game:
         if not self.player.is_alive: return
         current_dimension_str = 'gema' if self.player.in_gema_dimension else 'normal'
         for trap in self.trigger_traps:
-            if not trap['is_active'] and (trap['dim'] in [current_dimension_str, 'both']):
-                if self.player.collides(trap['trigger_rect']):
-                    trap['is_active'] = True
+            trap.try_activate(self.player.rect, current_dimension_str)
 
         if not self.end_sequence_active:
             for end_t in self.end_triggers:
@@ -327,52 +313,39 @@ class Game:
                     break
 
     def update_animated_traps(self):
-        SPIKE_ANIMATION_SPEED = 0.2
         for trap in self.trigger_traps:
-            if trap['is_active'] and not trap['animation_finished']:
-                trap['frame_index'] += SPIKE_ANIMATION_SPEED
-                if trap['frame_index'] >= len(self.spike_animation_frames):
-                    trap['animation_finished'] = True
-                    trap['frame_index'] = len(self.spike_animation_frames) - 1
+            trap.update(self.spike_frames)
 
     def update_campfires(self):
-        CAMPFIRE_ANIMATION_SPEED = 0.15
         for campfire in self.campfires:
-            campfire['frame_index'] += CAMPFIRE_ANIMATION_SPEED
-            if campfire['frame_index'] >= len(self.campfire_animation_frames):
-                campfire['frame_index'] = 0.0
+            campfire.update(self.campfire_frames)
 
     def draw_campfires(self, offset_x, offset_y):
-        vertical_offset = 10
-        
         for campfire in self.campfires:
-            current_frame_index = int(campfire['frame_index'])
-            if 0 <= current_frame_index < len(self.campfire_animation_frames):
-                image_to_draw = self.campfire_animation_frames[current_frame_index]
-                
-                scaled_image = pygame.transform.scale(image_to_draw, (campfire['rect'].width, campfire['rect'].height))
-                
-                self.game_surface.blit(scaled_image, (campfire['rect'].x - offset_x, campfire['rect'].y - offset_y + vertical_offset))
+            campfire.draw(self.game_surface, offset_x, offset_y, self.campfire_frames)
 
     def respawn_player(self):
         self.player.respawn(self.start_pos)
         self.spawn_invincibility_timer = self.spawn_invincibility_duration
         self.is_in_death_delay = False
         for trap in self.trigger_traps:
-            trap['is_active'] = False
-            trap['frame_index'] = 0.0
-            trap['animation_finished'] = False
+            trap.is_active = False
+            trap.frame_index = 0.0
+            trap.animation_finished = False
         self.enemies = []
         for e_info in getattr(self, 'enemy_spawns', []):
             etype = e_info.get('type', 'patrol')
             if etype == 'chaser':
                 facing = e_info.get('facing', 'right')
                 self.enemies.append(ChaserEnemy(e_info['x'], e_info['y'], size=(50, 50), speed=2.5, facing=facing))
+            elif etype == 'chaser_heavy':
+                facing = e_info.get('facing', 'right')
+                self.enemies.append(ChaserEnemy(e_info['x'], e_info['y'], size=(50, 50), speed=2.2, facing=facing, asset_folder='Heavy Bandit'))
             else:
                 lb = e_info.get('left_bound')
                 rb = e_info.get('right_bound')
                 facing = e_info.get('facing', 'right')
-                pe = PatrollingEnemy(e_info['x'], e_info['y'], lb, rb, size=(50, 50), speed=2.0)
+                pe = PatrollingEnemy(e_info['x'], e_info['y'], lb, rb, size=(30, 30), speed=2.0)
                 pe.direction = 1 if facing == 'right' else -1
                 self.enemies.append(pe)
 
@@ -387,18 +360,25 @@ class Game:
             if t['dim'] in [current_dimension_str, 'both']:
                 active_trap_rects.append(t['rect'])
         for trap in self.trigger_traps:
-            if trap['is_active'] and trap['dim'] in [current_dimension_str, 'both']:
-                active_trap_rects.append(trap['trap_rect'])
+            if trap.is_active and trap.dim in [current_dimension_str, 'both']:
+                active_trap_rects.append(trap.get_hazard_rect())
         for enemy in getattr(self, 'enemies', []):
             if getattr(enemy, 'is_dying', False):
                 continue
-            block_rect = enemy.get_block_rect() if hasattr(enemy, 'get_block_rect') else enemy.rect
-            if self.player.rect.colliderect(block_rect):
-                if hasattr(enemy, 'on_player_contact') and enemy.is_alive:
-                    enemy.on_player_contact()
+                if getattr(enemy, 'blocks_player', True):  # Check if enemy blocks player
+                    block_rect = enemy.get_block_rect() if hasattr(enemy, 'get_block_rect') else enemy.rect
+                    if self.player.rect.colliderect(block_rect):
+                        if hasattr(enemy, 'on_player_contact') and enemy.is_alive:
+                            enemy.on_player_contact()
             if hasattr(enemy, 'is_hazard_active') and enemy.is_hazard_active():
                 hazard_rect = enemy.get_hazard_rect() if hasattr(enemy, 'get_hazard_rect') else enemy.rect
                 active_trap_rects.append(hazard_rect)
+                # If patrol contacts player, force idle immediately and keep idle permanently
+                if isinstance(enemy, PatrollingEnemy) and hazard_rect.colliderect(self.player.rect):
+                    if hasattr(enemy, 'on_player_contact') and enemy.is_alive:
+                        enemy.on_player_contact()
+                    # stay idle after kill/contact per request
+                    setattr(enemy, 'permanent_idle', True)
 
         result = self.player.apply_hazards(active_trap_rects, SCREEN_HEIGHT, is_invincible=False)
         if result:
@@ -560,18 +540,19 @@ class Game:
                     for enemy in getattr(self, 'enemies', []):
                         if getattr(enemy, 'is_dying', False):
                             continue
-                        block_rect = enemy.get_block_rect() if hasattr(enemy, 'get_block_rect') else enemy.rect
-                        if self.player.rect.colliderect(block_rect):
-                            if self.player.velocity.x > 0:
-                                self.player.rect.right = block_rect.left
-                            elif self.player.velocity.x < 0:
-                                self.player.rect.left = block_rect.right
-                            else:
-                                if self.player.rect.centerx < block_rect.centerx:
+                        if getattr(enemy, 'blocks_player', True):
+                            block_rect = enemy.get_block_rect() if hasattr(enemy, 'get_block_rect') else enemy.rect
+                            if self.player.rect.colliderect(block_rect):
+                                if self.player.velocity.x > 0:
                                     self.player.rect.right = block_rect.left
-                                else:
+                                elif self.player.velocity.x < 0:
                                     self.player.rect.left = block_rect.right
-                            self.player.velocity.x = 0
+                                else:
+                                    if self.player.rect.centerx < block_rect.centerx:
+                                        self.player.rect.right = block_rect.left
+                                    else:
+                                        self.player.rect.left = block_rect.right
+                                self.player.velocity.x = 0
 
                 if not self.end_sequence_active:
                     attack_rect = self.player.get_attack_hitbox() if hasattr(self.player, 'get_attack_hitbox') else None
@@ -636,14 +617,8 @@ class Game:
                         self.game_surface.blit(scaled_image, (p['rect'].x - final_offset_x, p['rect'].y - final_offset_y))
 
             for trap in self.trigger_traps:
-                if trap['is_active'] and trap['dim'] in [current_dimension_str, 'both']:
-                    frame_to_draw = self.spike_animation_frames[int(trap['frame_index'])]
-                    scaled_image = pygame.transform.scale(frame_to_draw, (trap['trap_rect'].width, trap['trap_rect'].height))
-                    
-                    vertical_offset = 20
-                    draw_y = trap['trap_rect'].y + vertical_offset
-                    
-                    self.game_surface.blit(scaled_image, (trap['trap_rect'].x - final_offset_x, draw_y - final_offset_y))
+                if trap.is_active and trap.dim in [current_dimension_str, 'both']:
+                    trap.draw(self.game_surface, final_offset_x, final_offset_y, self.spike_frames)
 
             self.draw_campfires(final_offset_x, final_offset_y)
 

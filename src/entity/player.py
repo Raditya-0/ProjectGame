@@ -226,7 +226,9 @@ class Player(Entity):
         draw_x = self.rect.x - camera_offset_x
         draw_y = (self.rect.bottom - img.get_height()) - camera_offset_y
         if getattr(self, 'state', '') in ['attack1', 'attack2']:
-            draw_x -= 10
+            # Align attack pose: mirror offset by facing
+            attack_shift = 0
+            draw_x += attack_shift if self.direction == 1 else -attack_shift
 
         screen.blit(img, (draw_x, draw_y))
 
@@ -234,7 +236,7 @@ class Player(Entity):
     def is_attack_active(self) -> bool:
         return (self.attack_state in ('attack1', 'attack2')) and not getattr(self, 'animation_finished', False)
 
-    def get_attack_hitbox(self, width: int = 40) -> pygame.Rect | None:
+    def get_attack_hitbox(self, width: int = 20) -> pygame.Rect | None:
         if not self.is_attack_active():
             return None
         if self.direction == 1:

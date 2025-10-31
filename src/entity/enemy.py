@@ -27,6 +27,8 @@ class Enemy(Entity):
         self._idle_locked = False
         self._idle_until_ms = 0
         self.base_faces_right = True
+        # By default, enemies block the player; subclasses can override
+        self.blocks_player = True
 
     def draw(self, screen: pygame.Surface, camera_offset_x: float, camera_offset_y: float):
         flip = (self.direction == -1 and self.base_faces_right) or (self.direction == 1 and not self.base_faces_right)
@@ -61,8 +63,24 @@ class Enemy(Entity):
         self.animation_finished = False
         self.is_alive = True
         self.remove_at_ms = pygame.time.get_ticks() + 1500
+
+    # Navigation helpers
+    def _has_ground_ahead(self, platforms: list[pygame.Rect], direction: int | None = None, ahead_px: int = 6) -> bool:
+        """Return True if there's solid ground immediately ahead in the current moving direction.
+        Checks a small probe just beyond the front foot to prevent stepping off ledges.
+        """
+        if direction is None:
+            direction = self.direction
+        # Probe point slightly ahead of front foot and just below the feet
+        front_x = self.rect.centerx + direction * (self.rect.width // 2 + max(1, ahead_px))
+        probe = pygame.Rect(front_x, self.rect.bottom + 1, 2, 3)
+        for plat in platforms:
+            if plat.colliderect(probe):
+                return True
+        return False
+    
 class PatrollingEnemy(Enemy):
-    def __init__(self, x: int, y: int, left_bound_x: Optional[float] = None, right_bound_x: Optional[float] = None, size=(50, 50), speed: float = 2.0, sprite_dir: Optional[str] = None):
+    def __init__(self, x: int, y: int, left_bound_x: Optional[float] = None, right_bound_x: Optional[float] = None, size=(30, 30), speed: float = 2.0, sprite_dir: Optional[str] = None):
         run_frames = []
         idle_frames = []
         base_path = os.path.dirname(os.path.abspath(__file__))
@@ -118,26 +136,40 @@ class PatrollingEnemy(Enemy):
         self.vertical_offset = 4
         self.rect.bottom -= self.vertical_offset
 
-        self.draw_offset_y = 5
+        # Raise draw a bit so sprite doesn't sink into ground (negative lifts up)
+        self.draw_offset_y = 0
 
         self.contact_idle_duration_ms = 400
         self._idle_until_ms = 0
         self._idle_locked = False
+        # Patrol should not hard-block the player; let contact pass through
+        self.blocks_player = False
+        # When set true (e.g., after killing player), stay idle forever
+        self.permanent_idle = False
 
     def compute_state(self) -> str:
         return super().compute_state()
 
     def update(self, platforms: list[pygame.Rect], player: Optional[Entity] = None):
+        # Death takes precedence: play death animation once
         if self.is_dying:
             self.velocity.x = 0
-            self._idle_locked = True
+            self.state = 'death'
+            self.step(platforms)
+            return
+        # If set to permanent idle (after a kill), remain idle and do not move
+        if getattr(self, 'permanent_idle', False):
+            self.velocity.x = 0
             self.state = 'idle'
-            self.animate()
+            self.step(platforms)
             return
 
         if self._is_idling_due_to_contact():
+            # Locked idle after contact: do not move
             self.velocity.x = 0
         else:
+            # Not in idle lock: ensure state returns to 'run'
+            self.state = 'run'
             if self.direction > 0:
                 if self.rect.centerx >= self.right_bound_x:
                     self.direction = -1
@@ -145,17 +177,25 @@ class PatrollingEnemy(Enemy):
                 if self.rect.centerx <= self.left_bound_x:
                     self.direction = 1
 
+            # Move based on patrol bounds only (no edge-stop probing)
             self.velocity.x = self.speed * self.direction
 
         self.step(platforms)
 
+    def is_hazard_active(self) -> bool:
+        """Patrol is always hazardous on touch while alive (contact kills/damages)."""
+        return self.is_alive and not self.is_dying
+
+    def get_hazard_rect(self) -> pygame.Rect:
+        """Use a slightly inflated collider so contact registers even at edge touch."""
+        return self.get_block_rect().inflate(2, 0)
+
 
 class ChaserEnemy(Enemy):
-    """Chaser with Light Bandit animations; no long cooldown, brief combat idle after a landed hit."""
-    def __init__(self, x: int, y: int, size=(50, 50), speed: float = 2.5, facing: str = 'right'):
+    def __init__(self, x: int, y: int, size=(50, 50), speed: float = 2.5, facing: str = 'right', asset_folder: str = 'Light Bandit'):
         base_path = os.path.dirname(os.path.abspath(__file__))
         project_root = os.path.abspath(os.path.join(base_path, '..', '..'))
-        bandit_dir = os.path.join(project_root, 'Assets', 'Enemies', 'Light Bandit')
+        bandit_dir = os.path.join(project_root, 'Assets', 'Enemies', asset_folder)
 
         def load_folder(folder: str) -> list[pygame.Surface]:
             frames = []
@@ -175,6 +215,7 @@ class ChaserEnemy(Enemy):
         idle_frames = load_folder(os.path.join(bandit_dir, 'Idle'))
         run_frames = load_folder(os.path.join(bandit_dir, 'Run'))
         attack_frames = load_folder(os.path.join(bandit_dir, 'Attack'))
+        hurt_frames = load_folder(os.path.join(bandit_dir, 'Hurt'))
         death_frames = load_folder(os.path.join(bandit_dir, 'Death'))
         combat_idle_frames = load_folder(os.path.join(bandit_dir, 'Combat Idle'))
 
@@ -190,9 +231,10 @@ class ChaserEnemy(Enemy):
         self.animations['run'] = run_frames if run_frames else idle_frames
         self.animations['attack'] = attack_frames if attack_frames else idle_frames
         self.animations['death'] = death_frames if death_frames else idle_frames
+        self.animations['hurt'] = hurt_frames if hurt_frames else []
         self.animations['combat_idle'] = combat_idle_frames if combat_idle_frames else idle_frames
 
-        self.non_looping_states = {'attack', 'death'}
+        self.non_looping_states = {'attack', 'death', 'hurt'}
 
         self.speed = abs(speed)
         self.direction = 1 if facing == 'right' else -1
@@ -212,6 +254,8 @@ class ChaserEnemy(Enemy):
         self.rect.bottom -= self.vertical_offset
 
         self.draw_offset_y = 2
+        # Chaser keeps blocking behavior to feel solid
+        self.blocks_player = True
 
         atk_len = len(self.animations.get('attack', []))
         if atk_len >= 6:
@@ -243,8 +287,9 @@ class ChaserEnemy(Enemy):
         return dx <= self.attack_range_x and dy <= max(self.attack_vertical_tolerance, self.rect.height // 2)
 
     def compute_state(self) -> str:
-        if not self.is_alive:
-            return 'death'
+        if self.is_dying or not self.is_alive:
+            # Preserve explicit 'hurt' or 'death' while dying
+            return self.state if self.state in ('hurt', 'death') else 'death'
         if self.state in ('attack', 'combat_idle'):
             return self.state
         return 'run' if self.alerted else 'idle'
@@ -252,9 +297,20 @@ class ChaserEnemy(Enemy):
     def update(self, platforms: list[pygame.Rect], player: Optional[Entity] = None):
         if self.is_dying:
             self.velocity.x = 0
-            self._idle_locked = True
-            self.state = 'idle'
-            self.animate()
+            # Enter hurt first if available, then death
+            if self.state not in ('hurt', 'death'):
+                self.state = 'hurt' if self.animations.get('hurt') else 'death'
+                self.frame_index = 0
+                self.animation_finished = False
+                # Give ample time so enemy isn't removed too early; will adjust on death transition
+                self.remove_at_ms = pygame.time.get_ticks() + 5000
+            self.step(platforms)
+            if self.state == 'hurt' and self.animation_finished:
+                # Transition to death
+                self.state = 'death'
+                self.frame_index = 0
+                self.animation_finished = False
+                self.remove_at_ms = pygame.time.get_ticks() + 1500
             return
 
         now = pygame.time.get_ticks()
@@ -307,7 +363,10 @@ class ChaserEnemy(Enemy):
                 self.animation_finished = False
                 self.velocity.x = 0
             else:
-                self.velocity.x = self.speed * self.direction
+                if self._has_ground_ahead(platforms, self.direction):
+                    self.velocity.x = self.speed * self.direction
+                else:
+                    self.velocity.x = 0
         else:
             self.velocity.x = 0
 
@@ -328,4 +387,17 @@ class ChaserEnemy(Enemy):
         else:
             x = block.left - w
         return pygame.Rect(x, y, w, h)
+
+    def on_killed_by_player(self):
+        """Override to play hurt then death before removal."""
+        self.is_dying = True
+        # Stop any combat carryover flags
+        self._landed_hit_this_attack = False
+        # Start with hurt if available
+        self.state = 'hurt' if self.animations.get('hurt') else 'death'
+        self.frame_index = 0
+        self.animation_finished = False
+        self.is_alive = True
+        # Set a generous removal window; refined when switching to death
+        self.remove_at_ms = pygame.time.get_ticks() + 5000
 
