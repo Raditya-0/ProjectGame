@@ -4,6 +4,7 @@ import assets
 from entity.player import Player
 from parallax import ParallaxLayer, ParallaxObject
 from entity.enemy import PatrollingEnemy, ChaserEnemy
+from entity.boss import Boss
 from environment.trap import load_spike_frames, TriggerTrap
 from environment.campfire import load_campfire_frames, Campfire
 import os
@@ -156,6 +157,9 @@ class Game:
                         elif char in 'Ff':
                             facing = 'right' if char == 'F' else 'left'
                             enemy_spawns_normal.append({'rect': rect, 'type': 'chaser', 'facing': facing})
+                        elif char in 'Bb':
+                            facing = 'right' if char == 'B' else 'left'
+                            enemy_spawns_normal.append({'rect': rect, 'type': 'boss', 'facing': facing})
                         elif char in 'lL':
                             left_markers_normal.setdefault(y, []).append(world_x + tile_size // 2)
                         elif char in 'rR':
@@ -203,6 +207,9 @@ class Game:
                         elif char in 'Ff':
                             facing = 'right' if char == 'F' else 'left'
                             enemy_spawns_gema.append({'rect': rect, 'type': 'chaser', 'facing': facing})
+                        elif char in 'Bb':
+                            facing = 'right' if char == 'B' else 'left'
+                            enemy_spawns_gema.append({'rect': rect, 'type': 'boss', 'facing': facing})
                         elif char == 'D':
                             self.end_triggers.append({'rect': rect, 'dim': 'gema', 'mode': 'jump_walk'})
                         elif char == 'd':
@@ -255,6 +262,8 @@ class Game:
                     enemy = ChaserEnemy(spawn_rect.x, spawn_rect.bottom, size=(50, 50), speed=2.5, facing=facing)
                 elif etype == 'chaser_heavy':
                     enemy = ChaserEnemy(spawn_rect.x, spawn_rect.bottom, size=(50, 50), speed=2.2, facing=facing, asset_folder='Heavy Bandit')
+                elif etype == 'boss':
+                    enemy = Boss(spawn_rect.x, spawn_rect.bottom, size=(140, 93), speed=1.5, facing=facing)
                 else:
                     enemy = PatrollingEnemy(spawn_rect.x, spawn_rect.bottom, left_bound, right_bound, size=(30, 30), speed=2.0)
                     enemy.direction = 1 if facing == 'right' else -1
@@ -341,6 +350,9 @@ class Game:
             elif etype == 'chaser_heavy':
                 facing = e_info.get('facing', 'right')
                 self.enemies.append(ChaserEnemy(e_info['x'], e_info['y'], size=(50, 50), speed=2.2, facing=facing, asset_folder='Heavy Bandit'))
+            elif etype == 'boss':
+                facing = e_info.get('facing', 'right')
+                self.enemies.append(Boss(e_info['x'], e_info['y'], size=(140, 93), speed=1.5, facing=facing))
             else:
                 lb = e_info.get('left_bound')
                 rb = e_info.get('right_bound')
@@ -356,6 +368,7 @@ class Game:
         current_dimension_str = 'gema' if self.player.in_gema_dimension else 'normal'
 
         active_trap_rects = []
+        chaser_that_hit_player = None
         for t in self.traps:
             if t['dim'] in [current_dimension_str, 'both']:
                 active_trap_rects.append(t['rect'])
@@ -365,11 +378,6 @@ class Game:
         for enemy in getattr(self, 'enemies', []):
             if getattr(enemy, 'is_dying', False):
                 continue
-                if getattr(enemy, 'blocks_player', True):  # Check if enemy blocks player
-                    block_rect = enemy.get_block_rect() if hasattr(enemy, 'get_block_rect') else enemy.rect
-                    if self.player.rect.colliderect(block_rect):
-                        if hasattr(enemy, 'on_player_contact') and enemy.is_alive:
-                            enemy.on_player_contact()
             if hasattr(enemy, 'is_hazard_active') and enemy.is_hazard_active():
                 hazard_rect = enemy.get_hazard_rect() if hasattr(enemy, 'get_hazard_rect') else enemy.rect
                 active_trap_rects.append(hazard_rect)
@@ -379,9 +387,30 @@ class Game:
                         enemy.on_player_contact()
                     # stay idle after kill/contact per request
                     setattr(enemy, 'permanent_idle', True)
+                # Track if a chaser actually landed the hazard on the player this frame
+                if isinstance(enemy, ChaserEnemy) and hazard_rect.colliderect(self.player.rect):
+                    chaser_that_hit_player = enemy
+            
+            # Add boss spell hazards and melee attack
+            if isinstance(enemy, Boss):
+                for spell_rect in enemy.get_spell_hazards():
+                    active_trap_rects.append(spell_rect)
+                # Add boss melee attack damage
+                if hasattr(enemy, 'is_melee_active') and enemy.is_melee_active():
+                    melee_rect = enemy.get_melee_hazard_rect()
+                    active_trap_rects.append(melee_rect)
 
         result = self.player.apply_hazards(active_trap_rects, SCREEN_HEIGHT, is_invincible=False)
         if result:
+            # If a chaser's hazard hit and it caused any form of death (temporary or true),
+            # lock that chaser into permanent combat idle immediately and persist until respawn.
+            if chaser_that_hit_player is not None:
+                setattr(chaser_that_hit_player, 'permanent_combat_idle', True)
+                # Force immediate visual/state change this frame
+                chaser_that_hit_player.state = 'combat_idle'
+                chaser_that_hit_player.frame_index = 0
+                chaser_that_hit_player.animation_finished = False
+                chaser_that_hit_player.velocity.x = 0
             if result.get('temporary_death'):
                 self.is_in_death_delay = True
                 self.death_delay_timer = result.get('delay_ms', 500)
@@ -559,7 +588,11 @@ class Game:
                     if attack_rect:
                         for enemy in list(getattr(self, 'enemies', [])):
                             if enemy.is_alive and not getattr(enemy, 'is_dying', False) and attack_rect.colliderect(enemy.rect):
-                                if hasattr(enemy, 'on_killed_by_player'):
+                                # Boss takes damage instead of instant death
+                                if isinstance(enemy, Boss):
+                                    if hasattr(enemy, 'take_damage'):
+                                        enemy.take_damage(1)
+                                elif hasattr(enemy, 'on_killed_by_player'):
                                     enemy.on_killed_by_player()
                 
                 if self.player.is_alive:
@@ -624,6 +657,11 @@ class Game:
 
             for enemy in getattr(self, 'enemies', []):
                 enemy.draw(self.game_surface, final_offset_x, final_offset_y)
+            
+            # Draw boss spells (above enemies, below player)
+            for enemy in getattr(self, 'enemies', []):
+                if isinstance(enemy, Boss):
+                    enemy.draw_spells(self.game_surface, final_offset_x, final_offset_y)
 
             if self.debug_draw:
                 pygame.draw.rect(self.game_surface, (0, 255, 0), pygame.Rect(self.player.rect.x - final_offset_x, self.player.rect.y - final_offset_y, self.player.rect.width, self.player.rect.height), 1)
