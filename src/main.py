@@ -570,7 +570,14 @@ class Game:
                         if getattr(enemy, 'is_dying', False):
                             continue
                         if getattr(enemy, 'blocks_player', True):
-                            block_rect = enemy.get_block_rect() if hasattr(enemy, 'get_block_rect') else enemy.rect
+                            # Use invisible wall for boss, regular block_rect for others
+                            if hasattr(enemy, 'get_invisible_wall_rect'):
+                                block_rect = enemy.get_invisible_wall_rect()
+                            elif hasattr(enemy, 'get_block_rect'):
+                                block_rect = enemy.get_block_rect()
+                            else:
+                                block_rect = enemy.rect
+                                
                             if self.player.rect.colliderect(block_rect):
                                 if self.player.velocity.x > 0:
                                     self.player.rect.right = block_rect.left
