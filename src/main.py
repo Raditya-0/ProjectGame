@@ -7,6 +7,7 @@ from entity.enemy import PatrollingEnemy, ChaserEnemy
 from entity.boss import Boss
 from environment.trap import load_spike_frames, TriggerTrap
 from environment.campfire import load_campfire_frames, Campfire
+from save_manager import SaveManager
 import os
 from exception import AssetLoadError, LevelFileNotFound, AudioLoadError
 import UI as UI
@@ -26,6 +27,9 @@ class Game:
         self.font = pygame.font.Font(None, 40)
         self.game_state = 'main_menu'
         self.prev_game_state = 'main_menu'
+        
+        # Save manager for progress tracking
+        self.save_manager = SaveManager()
         
         self.spike_frames = []
         self.parallax_layers = []
@@ -419,6 +423,8 @@ class Game:
     def go_to_next_level(self):
         current_hearts = self.player.hearts
         self.current_level_index += 1
+        # Save progress when advancing to next level
+        self.save_manager.save_progress(self.current_level_index + 1, current_hearts)
         if self.current_level_index < len(self.levels):
             level_pair = self.levels[self.current_level_index]
             self.setup_level(level_pair[0], level_pair[1], new_game=True)
@@ -441,6 +447,12 @@ class Game:
     
 
     def run(self):
+        # Load saved progress to display correct level in main menu background
+        save_data = self.save_manager.load_progress()
+        saved_level_index = save_data.get('current_level', 1) - 1  # Convert to 0-indexed
+        if saved_level_index >= len(self.levels) or saved_level_index < 0:
+            saved_level_index = 0
+        self.current_level_index = saved_level_index
         level_pair = self.levels[self.current_level_index]
         self.setup_level(level_pair[0], level_pair[1], new_game=True)
 
@@ -451,8 +463,10 @@ class Game:
         except pygame.error as e:
             print(str(AudioLoadError(music_path, e)))
         
-        start_button_rect = pygame.Rect(SCREEN_WIDTH / 2 - 100, SCREEN_HEIGHT / 2, 200, 50)
-        exit_button_rect = pygame.Rect(SCREEN_WIDTH / 2 - 100, SCREEN_HEIGHT / 2 + 75, 200, 50)
+        # Main menu buttons
+        continue_button_rect = pygame.Rect(SCREEN_WIDTH / 2 - 100, SCREEN_HEIGHT / 2 - 40, 200, 50)
+        new_game_button_rect = pygame.Rect(SCREEN_WIDTH / 2 - 100, SCREEN_HEIGHT / 2 + 35, 200, 50)
+        exit_button_rect = pygame.Rect(SCREEN_WIDTH / 2 - 100, SCREEN_HEIGHT / 2 + 110, 200, 50)
         
         pause_button_rect = pygame.Rect(SCREEN_WIDTH - 50, 10, 40, 40)
 
@@ -489,7 +503,23 @@ class Game:
                 
                 if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                     if self.game_state == 'main_menu':
-                        if start_button_rect.collidepoint(mouse_pos):
+                        # Continue button - load saved progress
+                        if continue_button_rect.collidepoint(mouse_pos):
+                            save_data = self.save_manager.load_progress()
+                            self.current_level_index = save_data.get('current_level', 1) - 1  # Convert to 0-indexed
+                            if self.current_level_index >= len(self.levels):
+                                self.current_level_index = 0
+                            level_pair = self.levels[self.current_level_index]
+                            self.setup_level(level_pair[0], level_pair[1], new_game=True)
+                            self.player.hearts = save_data.get('hearts', PLAYER_START_HEARTS)
+                            self.game_state = 'playing'
+                        # New game button - start from level 1
+                        if new_game_button_rect.collidepoint(mouse_pos):
+                            self.current_level_index = 0
+                            level_pair = self.levels[self.current_level_index]
+                            self.setup_level(level_pair[0], level_pair[1], new_game=True)
+                            self.player.hearts = PLAYER_START_HEARTS
+                            self.save_manager.save_progress(1, PLAYER_START_HEARTS)  # Save new game state
                             self.game_state = 'playing'
                         if exit_button_rect.collidepoint(mouse_pos):
                             self.running = False
@@ -516,7 +546,13 @@ class Game:
                             if self.settings_button.collidepoint(mouse_pos):
                                 self.is_settings_open = True
                             if self.main_menu_button.collidepoint(mouse_pos):
-                                self.current_level_index = 0
+                                # Save current progress before going to main menu
+                                self.save_manager.save_progress(self.current_level_index + 1, self.player.hearts)
+                                # Load saved level for main menu background
+                                save_data = self.save_manager.load_progress()
+                                self.current_level_index = save_data.get('current_level', 1) - 1
+                                if self.current_level_index >= len(self.levels):
+                                    self.current_level_index = 0
                                 level_pair = self.levels[self.current_level_index]
                                 self.setup_level(level_pair[0], level_pair[1], new_game=True)
                                 self.game_state = 'main_menu'
@@ -528,7 +564,11 @@ class Game:
                             self.player.hearts = PLAYER_START_HEARTS
                             self.game_state = 'playing' 
                         if self.main_menu_button.collidepoint(mouse_pos):
-                            self.current_level_index = 0
+                            # Load saved level for main menu background
+                            save_data = self.save_manager.load_progress()
+                            self.current_level_index = save_data.get('current_level', 1) - 1
+                            if self.current_level_index >= len(self.levels) or self.current_level_index < 0:
+                                self.current_level_index = 0
                             level_pair = self.levels[self.current_level_index]
                             self.setup_level(level_pair[0], level_pair[1], new_game=True)
                             self.game_state = 'main_menu' 
@@ -540,7 +580,11 @@ class Game:
                             self.player.hearts = PLAYER_START_HEARTS
                             self.game_state = 'playing'
                         if self.main_menu_button.collidepoint(mouse_pos):
-                            self.current_level_index = 0
+                            # Load saved level for main menu background
+                            save_data = self.save_manager.load_progress()
+                            self.current_level_index = save_data.get('current_level', 1) - 1
+                            if self.current_level_index >= len(self.levels) or self.current_level_index < 0:
+                                self.current_level_index = 0
                             level_pair = self.levels[self.current_level_index]
                             self.setup_level(level_pair[0], level_pair[1], new_game=True)
                             self.game_state = 'main_menu'
@@ -711,10 +755,17 @@ class Game:
             if self.game_state == 'main_menu':
                 UI.draw_text(self, "Dual Dimension", 80, (255, 255, 255), SCREEN_WIDTH / 2, SCREEN_HEIGHT / 4, shadow_color=(20, 20, 20))
                 
-                start_color = (150, 150, 150) if start_button_rect.collidepoint(mouse_pos) else (100, 100, 100)
-                pygame.draw.rect(self.screen, start_color, start_button_rect, border_radius=10)
-                UI.draw_text(self, "Mulai", 32, (255, 255, 255), start_button_rect.centerx, start_button_rect.centery)
+                # Continue button
+                continue_color = (150, 150, 150) if continue_button_rect.collidepoint(mouse_pos) else (100, 100, 100)
+                pygame.draw.rect(self.screen, continue_color, continue_button_rect, border_radius=10)
+                UI.draw_text(self, "Lanjutkan", 32, (255, 255, 255), continue_button_rect.centerx, continue_button_rect.centery)
                 
+                # New game button
+                new_game_color = (150, 150, 150) if new_game_button_rect.collidepoint(mouse_pos) else (100, 100, 100)
+                pygame.draw.rect(self.screen, new_game_color, new_game_button_rect, border_radius=10)
+                UI.draw_text(self, "Mulai Baru", 32, (255, 255, 255), new_game_button_rect.centerx, new_game_button_rect.centery)
+                
+                # Exit button
                 exit_color = (150, 150, 150) if exit_button_rect.collidepoint(mouse_pos) else (100, 100, 100)
                 pygame.draw.rect(self.screen, exit_color, exit_button_rect, border_radius=10)
                 UI.draw_text(self, "Keluar", 32, (255, 255, 255), exit_button_rect.centerx, exit_button_rect.centery)

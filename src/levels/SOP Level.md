@@ -5,7 +5,7 @@ Aturan huruf besar/kecil untuk arah hadap: Huruf besar = hadap kanan, huruf keci
 
 1) Medan (Terrain)
 
-- G/g  : Tanah (40x40). Menggunakan Assets/Tiles/ground.png. Solid (tidak bisa ditembus).
+- G/g  : Tanah (40x40). Menggunakan Assets/Tiles/ground.png. Solid (tidak bisa a).
 - P/p  : platform (40x20). Menggunakan Assets/Tiles/platform.png. Solid (bukan platform satu arah).
 
 2) Rintangan (Duri)
@@ -30,7 +30,6 @@ Aturan huruf besar/kecil untuk arah hadap: Huruf besar = hadap kanan, huruf keci
   ~80 px vertikal di atas) atau saat pemain melompati pengejar. Setelah waspada, ia akan mengejar secara horizontal.
 - N/n  : Titik muncul musuh pengejar berat (Heavy Bandit). Arah hadap: N→kanan, n→kiri.
   Perilaku mirip Light tetapi animasi/skin berbeda.
-
 
 5) Penanda & Kamera
 
