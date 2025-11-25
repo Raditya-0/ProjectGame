@@ -116,6 +116,12 @@ class Game:
 
         triggers_pos = {'normal': [], 'gema': []}
         trap_zones_pos = {'normal': [], 'gema': []}
+        npc_spawns_normal = []
+        npc_spawns_gema = []
+        npc2_spawns_normal = []
+        npc2_spawns_gema = []
+        npc3_spawns_normal = []
+        npc3_spawns_gema = []
 
         try:
             left_markers_normal = {}
@@ -163,6 +169,15 @@ class Game:
                             left_markers_normal.setdefault(y, []).append(world_x + tile_size // 2)
                         elif char in 'rR':
                             right_markers_normal.setdefault(y, []).append(world_x + tile_size // 2)
+                        elif char in 'Aa':
+                            facing = 'left' if char == 'A' else 'right'
+                            npc_spawns_normal.append({'rect': rect, 'facing': facing})
+                        elif char in 'Bb':
+                            facing = 'left' if char == 'B' else 'right'
+                            npc2_spawns_normal.append({'rect': rect, 'facing': facing})
+                        elif char in 'Ww':
+                            facing = 'left' if char == 'W' else 'right'
+                            npc3_spawns_normal.append({'rect': rect, 'facing': facing})
                         elif char == 'K':
                             self.camera_right_limit_x = world_x + tile_size // 2
             self.level_width_pixels = max(self.level_width_pixels, max_world_x + tile_size)
@@ -214,6 +229,15 @@ class Game:
                             left_markers_gema.setdefault(y, []).append(world_x + tile_size // 2)
                         elif char in 'rR':
                             right_markers_gema.setdefault(y, []).append(world_x + tile_size // 2)
+                        elif char in 'Aa':
+                            facing = 'left' if char == 'A' else 'right'
+                            npc_spawns_gema.append({'rect': rect, 'facing': facing})
+                        elif char in 'Bb':
+                            facing = 'left' if char == 'B' else 'right'
+                            npc2_spawns_gema.append({'rect': rect, 'facing': facing})
+                        elif char in 'Ww':
+                            facing = 'left' if char == 'W' else 'right'
+                            npc3_spawns_gema.append({'rect': rect, 'facing': facing})
                         elif char == 'K':
                             self.camera_right_limit_x = world_x + tile_size // 2
             self.level_width_pixels = max(self.level_width_pixels, max_world_x_gema + tile_size)
@@ -281,19 +305,110 @@ class Game:
         else:
             self.player.respawn(self.start_pos)
             
-        # --- NPCs (contoh penempatan dekat start) ---
+        # --- NPCs dari map file ---
         if new_game:
-            self.npcs = [
-                NPC(600,  0, variant="oldman",  dialog_lines=["Halo, aku kakek penjaga hutan.", "Berhati-hatilah dengan jebakan di depan!"], dim='normal'),
-                NPC(900,  0, variant="woman",   dialog_lines=["Hai, semoga harimu menyenangkan!", "Kamu bisa menukar koin di rumah sebelah!"], dim='normal'),
-                NPC(1200, 520, variant="bearded", dialog_lines=[...], dim='normal', auto_snap=False),  # manual
-                # Contoh NPC khusus dimensi gema:
-                # NPC(1500, 0, variant="hat-man", dialog_lines=[...], dim='gema'),
-            ]
-            # snap semua NPC ke lantai dimensi masing-masing
+            self.npcs = []
+            
+            # Spawn NPC dari normal map
+            for spawn_info in npc_spawns_normal:
+                spawn_rect = spawn_info['rect']
+                facing = spawn_info['facing']
+                npc = NPC(
+                    spawn_rect.x,
+                    spawn_rect.y,
+                    variant="oldman",
+                    dim='normal'
+                )
+                if facing == 'left':
+                    npc.direction = -1
+                else:
+                    npc.direction = 1
+                self.npcs.append(npc)
+            
+            # Spawn NPC dari gema map
+            for spawn_info in npc_spawns_gema:
+                spawn_rect = spawn_info['rect']
+                facing = spawn_info['facing']
+                npc = NPC(
+                    spawn_rect.x,
+                    spawn_rect.y,
+                    variant="woman",
+                    dim='gema'
+                )
+                if facing == 'left':
+                    npc.direction = -1
+                else:
+                    npc.direction = 1
+                self.npcs.append(npc)
+            
+            # Spawn NPC kedua (Bb - bearded) dari normal map
+            for spawn_info in npc2_spawns_normal:
+                spawn_rect = spawn_info['rect']
+                facing = spawn_info['facing']
+                npc = NPC(
+                    spawn_rect.x,
+                    spawn_rect.y,
+                    variant="bearded",
+                    dim='normal'
+                )
+                if facing == 'left':
+                    npc.direction = -1
+                else:
+                    npc.direction = 1
+                self.npcs.append(npc)
+            
+            # Spawn NPC kedua (Bb - bearded) dari gema map
+            for spawn_info in npc2_spawns_gema:
+                spawn_rect = spawn_info['rect']
+                facing = spawn_info['facing']
+                npc = NPC(
+                    spawn_rect.x,
+                    spawn_rect.y,
+                    variant="bearded",
+                    dim='gema'
+                )
+                if facing == 'left':
+                    npc.direction = -1
+                else:
+                    npc.direction = 1
+                self.npcs.append(npc)
+            
+            # Spawn NPC ketiga (Ww - hat-man) dari normal map
+            for spawn_info in npc3_spawns_normal:
+                spawn_rect = spawn_info['rect']
+                facing = spawn_info['facing']
+                npc = NPC(
+                    spawn_rect.x,
+                    spawn_rect.y,
+                    variant="hat-man",
+                    dim='normal'
+                )
+                if facing == 'left':
+                    npc.direction = -1
+                else:
+                    npc.direction = 1
+                self.npcs.append(npc)
+            
+            # Spawn NPC ketiga (Ww - hat-man) dari gema map
+            for spawn_info in npc3_spawns_gema:
+                spawn_rect = spawn_info['rect']
+                facing = spawn_info['facing']
+                npc = NPC(
+                    spawn_rect.x,
+                    spawn_rect.y,
+                    variant="hat-man",
+                    dim='gema'
+                )
+                if facing == 'left':
+                    npc.direction = -1
+                else:
+                    npc.direction = 1
+                self.npcs.append(npc)
+            
+            # Snap semua NPC ke lantai dimensi masing-masing
             for npc in self.npcs:
                 dim = npc.dim if npc.dim in ('normal','gema') else 'normal'
-                if getattr(npc, 'auto_snap', True):                 # <<< hanya yang auto_snap
+                if getattr(npc, 'auto_snap', True):
                     self.snap_actor_to_ground(npc.rect, dim=dim, max_dx=200)
 
 
@@ -485,10 +600,6 @@ class Game:
                         if getattr(npc, 'dim', 'both') in (current_dim, 'both'):
                             npc.handle_event(event)
 
-                
-                if self.game_state == 'playing' and hasattr(self, 'npcs') and not self.input_locked:
-                    for npc in self.npcs:
-                        npc.handle_event(event)
 
                 
                 if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
@@ -574,11 +685,6 @@ class Game:
                 for npc in getattr(self, 'npcs', []):
                     if getattr(npc, 'dim', 'both') in (current_dim, 'both'):
                         npc.update(self.player.rect)
-
-                # --- Update NPC ---
-                for npc in getattr(self, 'npcs', []):
-                    npc.update(self.player.rect)
-
 
                 if not self.end_sequence_active:
                     for enemy in getattr(self, 'enemies', []):

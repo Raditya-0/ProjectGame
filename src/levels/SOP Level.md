@@ -31,19 +31,35 @@ Aturan huruf besar/kecil untuk arah hadap: Huruf besar = hadap kanan, huruf keci
 - N/n  : Titik muncul musuh pengejar berat (Heavy Bandit). Arah hadap: N→kanan, n→kiri.
   Perilaku mirip Light tetapi animasi/skin berbeda.
 
+5) NPC (Non-Player Character)
 
-5) Penanda & Kamera
+- A/a  : Titik muncul NPC pertama (oldman/woman). Arah hadap: A→kiri, a→kanan.
+  Dialog: Sambutan umum dan tips perjalanan.
+  
+- B/b  : Titik muncul NPC kedua (bearded). Arah hadap: B→kiri, b→kanan.
+  Dialog: Tutorial tentang mekanisme shift dimensi (tekan SHIFT).
+  
+- W/w  : Titik muncul NPC ketiga (hat-man). Arah hadap: W→kiri, w→kanan.
+  Dialog: Peringatan tentang bahaya dan tips strategi.
+
+  Semua NPC akan otomatis di-snap ke lantai terdekat sesuai dimensi (normal/gema).
+  - Jika ditempatkan di map normal → NPC muncul di dimensi normal
+  - Jika ditempatkan di map gema → NPC muncul di dimensi gema
+  Pemain dapat berinteraksi dengan NPC dengan mendekati dan menekan tombol [E].
+  Catatan: Setiap NPC memiliki variant dan dialog yang berbeda sesuai fungsinya.
+
+6) Penanda & Kamera
 
 - l/L  : Penanda batas patroli kiri (gunakan pada baris yang sama dengan titik muncul H/h). Penanda terdekat ≤ x spawn menjadi batas kiri.
 - r/R  : Penanda batas patroli kanan (baris yang sama). Penanda terdekat ≥ x spawn menjadi batas kanan.
 - K    : Batas kanan kamera opsional (upper-case saja). Kamera tidak bergulir lebih jauh ke kanan dari tengah tile ini.
   Catatan: huruf k kecil tidak digunakan.
 
-6) Api Unggun & Dekorasi
+7) Api Unggun & Dekorasi
 
 - C/c  : Api unggun (beranimasi). Murni visual; ditempatkan pada tile di mana ia harus dirender.
 
-7) Peta Multi-dimensi (Normal & Gema)
+8) Peta Multi-dimensi (Normal & Gema)
 
 - Peta normal dan gema keduanya di-parse. Titik muncul musuh dari keduanya digabungkan dan duplikat berdasarkan tile dihilangkan.
   Anda dapat menempatkan titik muncul di salah satu peta; duplikat pada tile yang sama diabaikan.
@@ -54,5 +70,7 @@ Tips Desain
 - Untuk setiap duri j, letakkan T yang cocok tepat di atasnya untuk memastikan aktivasi. Jaga agar jumlahnya selaras (satu T per j).
 - Untuk musuh patroli (H/h), letakkan penanda l ... r pada baris yang sama untuk menentukan jangkauan jalan.
 - Gunakan huruf besar jika Anda ingin musuh menghadap ke kanan pada awalnya; huruf kecil untuk menghadap ke kiri.
+- Untuk NPC (A/a), huruf BESAR (A) = hadap kiri, huruf kecil (a) = hadap kanan. NPC akan otomatis turun ke lantai terdekat.
+- Letakkan NPC di lokasi strategis seperti dekat checkpoint, area istirahat, atau sebelum area berbahaya untuk memberikan tips.
 - Pemicu akhir (D/d) biasanya ditempatkan di dekat tepi paling kanan. Mereka mengunci input dan kamera serta menggerakkan pemain keluar secara otomatis.
 - Buat baris tidak lebih panjang dari yang dibutuhkan; spasi di akhir tidak apa-apa dan diabaikan.

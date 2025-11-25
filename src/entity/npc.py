@@ -5,6 +5,77 @@ from .entity import Entity
 
 TALK_KEY = pygame.K_e
 
+# --- Dialog Presets ---
+NPC_DIALOGS = {
+    'oldman_normal': (
+        "Halo, traveler!",
+        "Selamat datang di dunia Dual Dimension.",
+        "Di sini kamu bisa berpindah antara dua dimensi.",
+        "Untuk mengalahkan musuh,\n klik touchpad saat dekat.",
+        "Gunakan kemampuanmu dengan bijak.",
+        "Semoga perjalananmu lancar!"
+    ),
+    'oldman_gema': (
+        "Ini adalah dimensi gema.",
+        "Semuanya di sini berbeda dari dunia normal.",
+        "Platform dan musuh bisa berbeda.",
+        "Untuk mengalahkan musuh,\n   klik touchpad saat dekat.",
+        "Berhati-hatilah di sini.",
+        "Jangan lupa untuk kembali ke dimensi normal!"
+    ),
+    'woman_normal': (
+        "Halo, traveler!",
+        "Selamat datang di dunia Dual Dimension.",
+        "Di sini kamu bisa berpindah antara dua dimensi.",
+        "Untuk mengalahkan musuh,\n klik touchpad saat dekat.",
+        "Gunakan kemampuanmu dengan bijak.",
+        "Semoga perjalananmu lancar!"
+    ),
+    'woman_gema': (
+        "Ini adalah dimensi gema.",
+        "Semuanya di sini berbeda dari dunia normal.",
+        "Platform dan musuh bisa berbeda.",
+        "Untuk mengalahkan musuh,\n klik touchpad saat dekat.",
+        "Berhati-hatilah di sini.",
+        "Jangan lupa untuk kembali ke dimensi normal!"
+    ),
+    'bearded_normal': (
+        "Selamat datang, petualang!",
+        "Aku akan mengajarkanmu mekanik penting.",
+        "Tekan [SHIFT] untuk berpindah dimensi.",
+        "Kamu bisa berpindah kapan saja!",
+        "Gunakan ini dengan bijak \n  untuk menghindari bahaya.",
+        "Selamat berpetualang!"
+    ),
+    'bearded_gema': (
+        "Oh, kamu sudah di dimensi gema!",
+        "Dimensi ini penuh misteri dan bahaya.",
+        "Beberapa platform hanya muncul di dimensi ini.",
+        "Tekan [SHIFT] untuk kembali ke dimensi normal.",
+        "Jangan terlalu lama di sini!"
+    ),
+    'hat-man_normal': (
+        "Hati-hati dengan musuh di depan!",
+        "Mereka sangat berbahaya.",
+        "Semoga beruntung!"
+    ),
+    'hat-man_gema': (
+        "Selamat datang di dimensi gema.",
+        "Di sini semuanya berbeda.",
+        "Berhati-hatilah dalam melangkah.",
+        "Hindari Trap."
+    ),
+}
+
+def get_npc_dialog(variant, dim):
+    """Helper function untuk mendapatkan dialog preset berdasarkan variant dan dimensi"""
+    key = f"{variant}_{dim}"
+    return NPC_DIALOGS.get(key, NPC_DIALOGS.get(f"{variant}_normal", (
+        "Halo! Tekan [E] untuk lanjut.",
+        "Selamat datang di Dual Dimension!",
+        "Hati-hati jebakan dan semoga sukses!",
+    )))
+
 # --- Helper aset (tanpa ketergantungan file lain) ---
 def project_root_from_this_file() -> Path:
     # .../src/entity/npc.py -> .../ (root ProjectGame-GIGA)
@@ -49,27 +120,31 @@ class NPC(Entity):
         self.rect = self.image.get_rect(bottomleft=(x, y))
         self.dim = dim
         self.frame_index = 0.0
-        self.anim_speed = 0.15
+        self.anim_speed = 0.08
         self.auto_snap = auto_snap 
  
         # interaksi
         self.show_prompt = False
         self.talking = False
-        self.dialog_lines = dialog_lines or [
-            "Halo! Tekan [E] untuk lanjut.",
-            "Selamat datang di Dual Dimension!",
-            "Hati-hati jebakan dan semoga sukses!",
-        ]
+        # Simpan dialog sebagai tuple (immutable) untuk memastikan urutan tidak berubah
+        if dialog_lines is not None:
+            self.dialog_lines = tuple(dialog_lines)
+        else:
+            # Gunakan preset dialog berdasarkan variant dan dim
+            self.dialog_lines = get_npc_dialog(variant, dim if dim in ('normal', 'gema') else 'normal')
         self.dialog_index = 0
+        
+        # Simpan total dialog untuk safety check
+        self.total_dialogs = len(self.dialog_lines)
 
         # patrol opsional
         self.patrol = patrol  # contoh: ((200, 420), 0.8)
 
         # font UI
         try:
-            self.font = load_font_rel(font_path, size=22)
+            self.font = load_font_rel(font_path, size=16)
         except Exception:
-            self.font = pygame.font.SysFont(None, 22)
+            self.font = pygame.font.SysFont(None, 16)
 
     def update(self, player_rect: pygame.Rect):
         # animasi
@@ -92,12 +167,17 @@ class NPC(Entity):
     def handle_event(self, event: pygame.event.Event):
         if event.type == pygame.KEYDOWN and event.key == TALK_KEY and self.show_prompt:
             if not self.talking:
+                # Mulai percakapan dari awal (index 0)
                 self.talking = True
                 self.dialog_index = 0
             else:
+                # Lanjut ke dialog berikutnya
                 self.dialog_index += 1
+                # Pastikan index tidak melebihi jumlah dialog
                 if self.dialog_index >= len(self.dialog_lines):
+                    # Selesai, tutup dialog dan reset ke 0
                     self.talking = False
+                    self.dialog_index = 0
 
     def draw(self, screen, camera_offset_x=0, camera_offset_y=0):
         # gambar sprite npc
@@ -118,12 +198,32 @@ class NPC(Entity):
         screen.blit(text, (x, y))
 
     def _draw_dialog_box(self, screen, camera_offset_x, camera_offset_y):
+        # Safety check: pastikan index valid
+        if self.dialog_index < 0 or self.dialog_index >= len(self.dialog_lines):
+            self.dialog_index = 0
+            
+        # Ambil dialog sesuai index saat ini
         dlg = self.dialog_lines[self.dialog_index]
-        text = self.font.render(dlg, True, (255, 255, 255))
-        w, h = text.get_size()
+        
+        # Split by newline untuk multi-line support
+        lines = dlg.split('\n')
+        text_surfaces = [self.font.render(line, True, (255, 255, 255)) for line in lines]
+        
+        # Hitung ukuran box berdasarkan line terpanjang dan jumlah baris
+        max_w = max(surf.get_width() for surf in text_surfaces)
+        line_height = text_surfaces[0].get_height()
+        total_h = line_height * len(lines) + (len(lines) - 1) * 5  # 5px spacing antar baris
+        
         pad = 10
-        x = self.rect.centerx - w // 2 - camera_offset_x
+        x = self.rect.centerx - max_w // 2 - camera_offset_x
         y = self.rect.y - 80 - camera_offset_y
-        pygame.draw.rect(screen, (20, 20, 20), (x - pad, y - pad, w + 2*pad, h + 2*pad), border_radius=10)
-        pygame.draw.rect(screen, (255, 255, 255), (x - pad, y - pad, w + 2*pad, h + 2*pad), 2, border_radius=10)
-        screen.blit(text, (x, y))
+        
+        # Draw background box
+        pygame.draw.rect(screen, (20, 20, 20), (x - pad, y - pad, max_w + 2*pad, total_h + 2*pad), border_radius=10)
+        pygame.draw.rect(screen, (255, 255, 255), (x - pad, y - pad, max_w + 2*pad, total_h + 2*pad), 2, border_radius=10)
+        
+        # Draw each line
+        current_y = y
+        for surf in text_surfaces:
+            screen.blit(surf, (x, current_y))
+            current_y += line_height + 5
