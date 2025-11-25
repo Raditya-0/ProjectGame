@@ -530,11 +530,11 @@ class Game:
                     elif self.game_state == 'paused':
                         if self.is_settings_open:
                             if self.music_button.collidepoint(mouse_pos):
-                                if self.is_music_paused:
-                                    pygame.mixer.music.unpause()
-                                else:
-                                    pygame.mixer.music.pause()
                                 self.is_music_paused = not self.is_music_paused
+                                if self.is_music_paused:
+                                    pygame.mixer.music.pause()
+                                else:
+                                    pygame.mixer.music.unpause()
                             if self.back_button.collidepoint(mouse_pos):
                                 self.is_settings_open = False
                         else:
