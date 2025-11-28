@@ -11,6 +11,8 @@ from save_manager import SaveManager
 import os
 from exception import AssetLoadError, LevelFileNotFound, AudioLoadError
 import UI as UI
+from entity.npc import NPC
+
 
 base_path = os.path.dirname(os.path.abspath(__file__))
 class Game:
@@ -113,11 +115,14 @@ class Game:
             self.enemy_spawns = []
             self.camera_right_limit_x = None
             self.level_width_pixels = 0
+            self.npcs = [] 
 
         tile_size = 40
 
         triggers_pos = {'normal': [], 'gema': []}
         trap_zones_pos = {'normal': [], 'gema': []}
+        npc_spawns_normal = {'A': [], 'Q': [], 'W': []}
+        npc_spawns_gema = {'A': [], 'Q': [], 'W': []}
 
         try:
             left_markers_normal = {}
@@ -168,6 +173,15 @@ class Game:
                             left_markers_normal.setdefault(y, []).append(world_x + tile_size // 2)
                         elif char in 'rR':
                             right_markers_normal.setdefault(y, []).append(world_x + tile_size // 2)
+                        elif char in 'Aa':
+                            facing = 'left' if char == 'A' else 'right'
+                            npc_spawns_normal['A'].append({'rect': rect, 'facing': facing})
+                        elif char in 'Qq':
+                            facing = 'left' if char == 'Q' else 'right'
+                            npc_spawns_normal['Q'].append({'rect': rect, 'facing': facing})
+                        elif char in 'Ww':
+                            facing = 'left' if char == 'W' else 'right'
+                            npc_spawns_normal['W'].append({'rect': rect, 'facing': facing})
                         elif char == 'K':
                             self.camera_right_limit_x = world_x + tile_size // 2
             self.level_width_pixels = max(self.level_width_pixels, max_world_x + tile_size)
@@ -222,6 +236,15 @@ class Game:
                             left_markers_gema.setdefault(y, []).append(world_x + tile_size // 2)
                         elif char in 'rR':
                             right_markers_gema.setdefault(y, []).append(world_x + tile_size // 2)
+                        elif char in 'Aa':
+                            facing = 'left' if char == 'A' else 'right'
+                            npc_spawns_gema['A'].append({'rect': rect, 'facing': facing})
+                        elif char in 'Qq':
+                            facing = 'left' if char == 'Q' else 'right'
+                            npc_spawns_gema['Q'].append({'rect': rect, 'facing': facing})
+                        elif char in 'Ww':
+                            facing = 'left' if char == 'W' else 'right'
+                            npc_spawns_gema['W'].append({'rect': rect, 'facing': facing})
                         elif char == 'K':
                             self.camera_right_limit_x = world_x + tile_size // 2
             self.level_width_pixels = max(self.level_width_pixels, max_world_x_gema + tile_size)
@@ -290,6 +313,18 @@ class Game:
                 print("Peringatan: 'S' (start position) tidak ditemukan!")
         else:
             self.player.respawn(self.start_pos)
+            
+        # --- NPCs dari map file ---
+        if new_game:
+            self.npcs = NPC.spawn_from_maps(npc_spawns_normal, npc_spawns_gema)
+            
+            # Snap semua NPC ke lantai dimensi masing-masing
+            for npc in self.npcs:
+                dim = npc.dim if npc.dim in ('normal','gema') else 'normal'
+                if getattr(npc, 'auto_snap', True):
+                    self.snap_actor_to_ground(npc.rect, dim=dim, max_dx=200)
+
+
         
         if new_game:
             self.parallax_layers = []
@@ -501,6 +536,15 @@ class Game:
                 if self.game_state == 'playing' and hasattr(self, 'player') and not self.input_locked:
                     self.player.handle_event(event)
                 
+                # HANYA NPC di dimensi aktif yang menerima input
+                if self.game_state == 'playing' and hasattr(self, 'npcs') and not self.input_locked and not self.end_sequence_active:
+                    current_dim = 'gema' if self.player.in_gema_dimension else 'normal'
+                    for npc in self.npcs:
+                        if getattr(npc, 'dim', 'both') in (current_dim, 'both'):
+                            npc.handle_event(event)
+
+
+                
                 if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                     if self.game_state == 'main_menu':
                         # Continue button - load saved progress
@@ -608,6 +652,12 @@ class Game:
                     self.player.update(active_platforms)
                 for enemy in getattr(self, 'enemies', []):
                     enemy.update(active_platforms, self.player)
+                
+                # Update NPC sesuai dimensi aktif
+                current_dim = 'gema' if self.player.in_gema_dimension else 'normal'
+                for npc in getattr(self, 'npcs', []):
+                    if getattr(npc, 'dim', 'both') in (current_dim, 'both'):
+                        npc.update(self.player.rect)
 
                 if not self.end_sequence_active:
                     for enemy in getattr(self, 'enemies', []):
@@ -714,22 +764,97 @@ class Game:
                 if isinstance(enemy, Boss):
                     enemy.draw_spells(self.game_surface, final_offset_x, final_offset_y)
 
+            # --- DEBUG DRAW ---
             if self.debug_draw:
-                pygame.draw.rect(self.game_surface, (0, 255, 0), pygame.Rect(self.player.rect.x - final_offset_x, self.player.rect.y - final_offset_y, self.player.rect.width, self.player.rect.height), 1)
-                if hasattr(self.player, 'get_attack_hitbox'):
+                # Player hitbox
+                pygame.draw.rect(
+                    self.game_surface, (0, 255, 0),
+                    pygame.Rect(
+                        self.player.rect.x - final_offset_x,
+                        self.player.rect.y - final_offset_y,
+                        self.player.rect.width,
+                        self.player.rect.height
+                    ), 1
+                )
+
+                # Player attack box
+                if hasattr(self.player, "get_attack_hitbox"):
                     atk_rect = self.player.get_attack_hitbox()
                     if atk_rect:
-                        pygame.draw.rect(self.game_surface, (255, 165, 0), pygame.Rect(atk_rect.x - final_offset_x, atk_rect.y - final_offset_y, atk_rect.width, atk_rect.height), 1)
-                for enemy in getattr(self, 'enemies', []):
-                    pygame.draw.rect(self.game_surface, (180, 180, 180), pygame.Rect(enemy.rect.x - final_offset_x, enemy.rect.y - final_offset_y, enemy.rect.width, enemy.rect.height), 1)
-                    if hasattr(enemy, 'get_block_rect'):
-                        br = enemy.get_block_rect()
-                        pygame.draw.rect(self.game_surface, (0, 200, 255), pygame.Rect(br.x - final_offset_x, br.y - final_offset_y, br.width, br.height), 1)
-                    if hasattr(enemy, 'is_hazard_active') and enemy.is_hazard_active():
-                        hz = enemy.get_hazard_rect() if hasattr(enemy, 'get_hazard_rect') else enemy.rect
-                        pygame.draw.rect(self.game_surface, (255, 0, 0), pygame.Rect(hz.x - final_offset_x, hz.y - final_offset_y, hz.width, hz.height), 1)
+                        pygame.draw.rect(
+                            self.game_surface, (255, 165, 0),
+                            pygame.Rect(
+                                atk_rect.x - final_offset_x,
+                                atk_rect.y - final_offset_y,
+                                atk_rect.width,
+                                atk_rect.height
+                            ), 1
+                        )
 
-            
+                # Enemy hitboxes
+                for enemy in getattr(self, "enemies", []):
+                    pygame.draw.rect(
+                        self.game_surface, (180, 180, 180),
+                        pygame.Rect(
+                            enemy.rect.x - final_offset_x,
+                            enemy.rect.y - final_offset_y,
+                            enemy.rect.width,
+                            enemy.rect.height
+                        ), 1
+                    )
+
+                    if hasattr(enemy, "get_block_rect"):
+                        br = enemy.get_block_rect()
+                        pygame.draw.rect(
+                            self.game_surface, (0, 200, 255),
+                            pygame.Rect(
+                                br.x - final_offset_x,
+                                br.y - final_offset_y,
+                                br.width,
+                                br.height
+                            ), 1
+                        )
+
+                    if hasattr(enemy, "is_hazard_active") and enemy.is_hazard_active():
+                        hz = enemy.get_hazard_rect() if hasattr(enemy, "get_hazard_rect") else enemy.rect
+                        pygame.draw.rect(
+                            self.game_surface, (255, 0, 0),
+                            pygame.Rect(
+                                hz.x - final_offset_x,
+                                hz.y - final_offset_y,
+                                hz.width,
+                                hz.height
+                            ), 1
+                        )
+
+                # --- NPC hitboxes (filter sesuai dimensi aktif) ---
+                current_dim = "gema" if self.player.in_gema_dimension else "normal"
+                for npc in getattr(self, "npcs", []):
+                    if getattr(npc, "dim", "both") in (current_dim, "both"):
+                        pygame.draw.rect(
+                            self.game_surface, (0, 255, 255),
+                            pygame.Rect(
+                                npc.rect.x - final_offset_x,
+                                npc.rect.y - final_offset_y,
+                                npc.rect.width,
+                                npc.rect.height
+                            ), 1
+                        )
+
+            # --- DRAW NPC sesuai dimensi aktif ---
+            current_dim = "gema" if self.player.in_gema_dimension else "normal"
+            for npc in getattr(self, "npcs", []):
+                if getattr(npc, "dim", "both") in (current_dim, "both"):
+                    npc.draw(self.game_surface, final_offset_x, final_offset_y)
+
+            # --- DRAW PLAYER ---
+            self.player.draw(self.game_surface, final_offset_x, final_offset_y)
+
+            # --- BLIT KE LAYAR ---
+            self.screen.blit(
+                pygame.transform.scale(self.game_surface, self.screen.get_size()), (0, 0)
+            )
+
             self.player.draw(self.game_surface, final_offset_x, final_offset_y)
             
             self.screen.blit(pygame.transform.scale(self.game_surface, self.screen.get_size()), (0, 0))
@@ -784,6 +909,41 @@ class Game:
             pygame.display.flip()
             self.clock.tick(FPS)
             
+    def ground_y_at(self, x, dim='normal'):
+        tops = [
+            p['rect'].top
+            for p in self.platforms
+            if p['dim'] in [dim, 'both'] and p['rect'].left <= x <= p['rect'].right
+        ]
+        return min(tops) if tops else SCREEN_HEIGHT  # fallback kalau tidak ada platform
+    
+    def ground_rect_at_or_near(self, x, dim='normal', max_dx=160):
+    # kandidat tepat di bawah x
+        exact = [p['rect'] for p in self.platforms
+                if p['dim'] in [dim, 'both'] and p['rect'].left <= x <= p['rect'].right]
+        if exact:
+            # pilih yang top paling kecil (paling atas)
+            return min(exact, key=lambda r: r.top)
+
+        # kalau kosong, cari platform terdekat secara horizontal
+        near = [(abs(x - r.centerx), r) for r in
+                (p['rect'] for p in self.platforms if p['dim'] in [dim, 'both'])]
+        near = [t for t in near if t[0] <= max_dx]
+        if near:
+            return min(near, key=lambda t: (t[0], t[1].top))[1]
+
+        return None  # benar-benar tidak ada lantai
+
+    def snap_actor_to_ground(self, actor_rect, dim='normal', max_dx=160):
+        r = self.ground_rect_at_or_near(actor_rect.centerx, dim, max_dx)
+        if r:
+            # jaga x tetap di atas platform
+            actor_rect.bottom = r.top
+            actor_rect.centerx = max(r.left + actor_rect.width//2,
+                                    min(r.right - actor_rect.width//2, actor_rect.centerx))
+            return True
+        return False
+
         pygame.quit()
 
 if __name__ == '__main__':
