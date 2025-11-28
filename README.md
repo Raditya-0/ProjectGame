@@ -92,3 +92,4 @@ Ketika game di-pause, akan ada empat tombol:
 * https://ansimuz.itch.io/sunny-land-pixel-game-art
 * https://clembod.itch.io/bringer-of-death-free?download
 * https://sventhole.itch.io/bandits
+* https://assetstore.unity.com/packages/2d/characters/gothicvania-town-101407

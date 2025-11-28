@@ -363,10 +363,15 @@ class ChaserEnemy(Enemy):
                 self.animation_finished = False
                 self.velocity.x = 0
             else:
+                # Check if there's ground ahead before moving
                 if self._has_ground_ahead(platforms, self.direction):
                     self.velocity.x = self.speed * self.direction
                 else:
+                    # Hit invisible wall (edge of platform) - stop and go idle
                     self.velocity.x = 0
+                    self.state = 'idle'
+                    self.alerted = False
+                    self.frame_index = 0
         else:
             self.velocity.x = 0
 

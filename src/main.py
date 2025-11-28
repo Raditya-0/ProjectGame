@@ -4,8 +4,10 @@ import assets
 from entity.player import Player
 from parallax import ParallaxLayer, ParallaxObject
 from entity.enemy import PatrollingEnemy, ChaserEnemy
+from entity.boss import Boss
 from environment.trap import load_spike_frames, TriggerTrap
 from environment.campfire import load_campfire_frames, Campfire
+from save_manager import SaveManager
 import os
 from exception import AssetLoadError, LevelFileNotFound, AudioLoadError
 import UI as UI
@@ -27,6 +29,9 @@ class Game:
         self.font = pygame.font.Font(None, 40)
         self.game_state = 'main_menu'
         self.prev_game_state = 'main_menu'
+        
+        # Save manager for progress tracking
+        self.save_manager = SaveManager()
         
         self.spike_frames = []
         self.parallax_layers = []
@@ -165,6 +170,9 @@ class Game:
                         elif char in 'Ff':
                             facing = 'right' if char == 'F' else 'left'
                             enemy_spawns_normal.append({'rect': rect, 'type': 'chaser', 'facing': facing})
+                        elif char in 'Bb':
+                            facing = 'right' if char == 'B' else 'left'
+                            enemy_spawns_normal.append({'rect': rect, 'type': 'boss', 'facing': facing})
                         elif char in 'lL':
                             left_markers_normal.setdefault(y, []).append(world_x + tile_size // 2)
                         elif char in 'rR':
@@ -221,6 +229,9 @@ class Game:
                         elif char in 'Ff':
                             facing = 'right' if char == 'F' else 'left'
                             enemy_spawns_gema.append({'rect': rect, 'type': 'chaser', 'facing': facing})
+                        elif char in 'Bb':
+                            facing = 'right' if char == 'B' else 'left'
+                            enemy_spawns_gema.append({'rect': rect, 'type': 'boss', 'facing': facing})
                         elif char == 'D':
                             self.end_triggers.append({'rect': rect, 'dim': 'gema', 'mode': 'jump_walk'})
                         elif char == 'd':
@@ -282,6 +293,8 @@ class Game:
                     enemy = ChaserEnemy(spawn_rect.x, spawn_rect.bottom, size=(50, 50), speed=2.5, facing=facing)
                 elif etype == 'chaser_heavy':
                     enemy = ChaserEnemy(spawn_rect.x, spawn_rect.bottom, size=(50, 50), speed=2.2, facing=facing, asset_folder='Heavy Bandit')
+                elif etype == 'boss':
+                    enemy = Boss(spawn_rect.x, spawn_rect.bottom, size=(140, 93), speed=1.5, facing=facing)
                 else:
                     enemy = PatrollingEnemy(spawn_rect.x, spawn_rect.bottom, left_bound, right_bound, size=(30, 30), speed=2.0)
                     enemy.direction = 1 if facing == 'right' else -1
@@ -476,6 +489,9 @@ class Game:
             elif etype == 'chaser_heavy':
                 facing = e_info.get('facing', 'right')
                 self.enemies.append(ChaserEnemy(e_info['x'], e_info['y'], size=(50, 50), speed=2.2, facing=facing, asset_folder='Heavy Bandit'))
+            elif etype == 'boss':
+                facing = e_info.get('facing', 'right')
+                self.enemies.append(Boss(e_info['x'], e_info['y'], size=(140, 93), speed=1.5, facing=facing))
             else:
                 lb = e_info.get('left_bound')
                 rb = e_info.get('right_bound')
@@ -491,6 +507,7 @@ class Game:
         current_dimension_str = 'gema' if self.player.in_gema_dimension else 'normal'
 
         active_trap_rects = []
+        chaser_that_hit_player = None
         for t in self.traps:
             if t['dim'] in [current_dimension_str, 'both']:
                 active_trap_rects.append(t['rect'])
@@ -500,11 +517,6 @@ class Game:
         for enemy in getattr(self, 'enemies', []):
             if getattr(enemy, 'is_dying', False):
                 continue
-                if getattr(enemy, 'blocks_player', True):  # Check if enemy blocks player
-                    block_rect = enemy.get_block_rect() if hasattr(enemy, 'get_block_rect') else enemy.rect
-                    if self.player.rect.colliderect(block_rect):
-                        if hasattr(enemy, 'on_player_contact') and enemy.is_alive:
-                            enemy.on_player_contact()
             if hasattr(enemy, 'is_hazard_active') and enemy.is_hazard_active():
                 hazard_rect = enemy.get_hazard_rect() if hasattr(enemy, 'get_hazard_rect') else enemy.rect
                 active_trap_rects.append(hazard_rect)
@@ -514,9 +526,30 @@ class Game:
                         enemy.on_player_contact()
                     # stay idle after kill/contact per request
                     setattr(enemy, 'permanent_idle', True)
+                # Track if a chaser actually landed the hazard on the player this frame
+                if isinstance(enemy, ChaserEnemy) and hazard_rect.colliderect(self.player.rect):
+                    chaser_that_hit_player = enemy
+            
+            # Add boss spell hazards and melee attack
+            if isinstance(enemy, Boss):
+                for spell_rect in enemy.get_spell_hazards():
+                    active_trap_rects.append(spell_rect)
+                # Add boss melee attack damage
+                if hasattr(enemy, 'is_melee_active') and enemy.is_melee_active():
+                    melee_rect = enemy.get_melee_hazard_rect()
+                    active_trap_rects.append(melee_rect)
 
         result = self.player.apply_hazards(active_trap_rects, SCREEN_HEIGHT, is_invincible=False)
         if result:
+            # If a chaser's hazard hit and it caused any form of death (temporary or true),
+            # lock that chaser into permanent combat idle immediately and persist until respawn.
+            if chaser_that_hit_player is not None:
+                setattr(chaser_that_hit_player, 'permanent_combat_idle', True)
+                # Force immediate visual/state change this frame
+                chaser_that_hit_player.state = 'combat_idle'
+                chaser_that_hit_player.frame_index = 0
+                chaser_that_hit_player.animation_finished = False
+                chaser_that_hit_player.velocity.x = 0
             if result.get('temporary_death'):
                 self.is_in_death_delay = True
                 self.death_delay_timer = result.get('delay_ms', 500)
@@ -525,6 +558,8 @@ class Game:
     def go_to_next_level(self):
         current_hearts = self.player.hearts
         self.current_level_index += 1
+        # Save progress when advancing to next level
+        self.save_manager.save_progress(self.current_level_index + 1, current_hearts)
         if self.current_level_index < len(self.levels):
             level_pair = self.levels[self.current_level_index]
             self.setup_level(level_pair[0], level_pair[1], new_game=True)
@@ -547,6 +582,12 @@ class Game:
     
 
     def run(self):
+        # Load saved progress to display correct level in main menu background
+        save_data = self.save_manager.load_progress()
+        saved_level_index = save_data.get('current_level', 1) - 1  # Convert to 0-indexed
+        if saved_level_index >= len(self.levels) or saved_level_index < 0:
+            saved_level_index = 0
+        self.current_level_index = saved_level_index
         level_pair = self.levels[self.current_level_index]
         self.setup_level(level_pair[0], level_pair[1], new_game=True)
 
@@ -557,8 +598,10 @@ class Game:
         except pygame.error as e:
             print(str(AudioLoadError(music_path, e)))
         
-        start_button_rect = pygame.Rect(SCREEN_WIDTH / 2 - 100, SCREEN_HEIGHT / 2, 200, 50)
-        exit_button_rect = pygame.Rect(SCREEN_WIDTH / 2 - 100, SCREEN_HEIGHT / 2 + 75, 200, 50)
+        # Main menu buttons
+        continue_button_rect = pygame.Rect(SCREEN_WIDTH / 2 - 100, SCREEN_HEIGHT / 2 - 40, 200, 50)
+        new_game_button_rect = pygame.Rect(SCREEN_WIDTH / 2 - 100, SCREEN_HEIGHT / 2 + 35, 200, 50)
+        exit_button_rect = pygame.Rect(SCREEN_WIDTH / 2 - 100, SCREEN_HEIGHT / 2 + 110, 200, 50)
         
         pause_button_rect = pygame.Rect(SCREEN_WIDTH - 50, 10, 40, 40)
 
@@ -604,7 +647,23 @@ class Game:
                 
                 if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                     if self.game_state == 'main_menu':
-                        if start_button_rect.collidepoint(mouse_pos):
+                        # Continue button - load saved progress
+                        if continue_button_rect.collidepoint(mouse_pos):
+                            save_data = self.save_manager.load_progress()
+                            self.current_level_index = save_data.get('current_level', 1) - 1  # Convert to 0-indexed
+                            if self.current_level_index >= len(self.levels):
+                                self.current_level_index = 0
+                            level_pair = self.levels[self.current_level_index]
+                            self.setup_level(level_pair[0], level_pair[1], new_game=True)
+                            self.player.hearts = save_data.get('hearts', PLAYER_START_HEARTS)
+                            self.game_state = 'playing'
+                        # New game button - start from level 1
+                        if new_game_button_rect.collidepoint(mouse_pos):
+                            self.current_level_index = 0
+                            level_pair = self.levels[self.current_level_index]
+                            self.setup_level(level_pair[0], level_pair[1], new_game=True)
+                            self.player.hearts = PLAYER_START_HEARTS
+                            self.save_manager.save_progress(1, PLAYER_START_HEARTS)  # Save new game state
                             self.game_state = 'playing'
                         if exit_button_rect.collidepoint(mouse_pos):
                             self.running = False
@@ -615,11 +674,11 @@ class Game:
                     elif self.game_state == 'paused':
                         if self.is_settings_open:
                             if self.music_button.collidepoint(mouse_pos):
-                                if self.is_music_paused:
-                                    pygame.mixer.music.unpause()
-                                else:
-                                    pygame.mixer.music.pause()
                                 self.is_music_paused = not self.is_music_paused
+                                if self.is_music_paused:
+                                    pygame.mixer.music.pause()
+                                else:
+                                    pygame.mixer.music.unpause()
                             if self.back_button.collidepoint(mouse_pos):
                                 self.is_settings_open = False
                         else:
@@ -631,7 +690,13 @@ class Game:
                             if self.settings_button.collidepoint(mouse_pos):
                                 self.is_settings_open = True
                             if self.main_menu_button.collidepoint(mouse_pos):
-                                self.current_level_index = 0
+                                # Save current progress before going to main menu
+                                self.save_manager.save_progress(self.current_level_index + 1, self.player.hearts)
+                                # Load saved level for main menu background
+                                save_data = self.save_manager.load_progress()
+                                self.current_level_index = save_data.get('current_level', 1) - 1
+                                if self.current_level_index >= len(self.levels):
+                                    self.current_level_index = 0
                                 level_pair = self.levels[self.current_level_index]
                                 self.setup_level(level_pair[0], level_pair[1], new_game=True)
                                 self.game_state = 'main_menu'
@@ -643,7 +708,11 @@ class Game:
                             self.player.hearts = PLAYER_START_HEARTS
                             self.game_state = 'playing' 
                         if self.main_menu_button.collidepoint(mouse_pos):
-                            self.current_level_index = 0
+                            # Load saved level for main menu background
+                            save_data = self.save_manager.load_progress()
+                            self.current_level_index = save_data.get('current_level', 1) - 1
+                            if self.current_level_index >= len(self.levels) or self.current_level_index < 0:
+                                self.current_level_index = 0
                             level_pair = self.levels[self.current_level_index]
                             self.setup_level(level_pair[0], level_pair[1], new_game=True)
                             self.game_state = 'main_menu' 
@@ -655,7 +724,11 @@ class Game:
                             self.player.hearts = PLAYER_START_HEARTS
                             self.game_state = 'playing'
                         if self.main_menu_button.collidepoint(mouse_pos):
-                            self.current_level_index = 0
+                            # Load saved level for main menu background
+                            save_data = self.save_manager.load_progress()
+                            self.current_level_index = save_data.get('current_level', 1) - 1
+                            if self.current_level_index >= len(self.levels) or self.current_level_index < 0:
+                                self.current_level_index = 0
                             level_pair = self.levels[self.current_level_index]
                             self.setup_level(level_pair[0], level_pair[1], new_game=True)
                             self.game_state = 'main_menu'
@@ -691,7 +764,14 @@ class Game:
                         if getattr(enemy, 'is_dying', False):
                             continue
                         if getattr(enemy, 'blocks_player', True):
-                            block_rect = enemy.get_block_rect() if hasattr(enemy, 'get_block_rect') else enemy.rect
+                            # Use invisible wall for boss, regular block_rect for others
+                            if hasattr(enemy, 'get_invisible_wall_rect'):
+                                block_rect = enemy.get_invisible_wall_rect()
+                            elif hasattr(enemy, 'get_block_rect'):
+                                block_rect = enemy.get_block_rect()
+                            else:
+                                block_rect = enemy.rect
+                                
                             if self.player.rect.colliderect(block_rect):
                                 if self.player.velocity.x > 0:
                                     self.player.rect.right = block_rect.left
@@ -709,7 +789,11 @@ class Game:
                     if attack_rect:
                         for enemy in list(getattr(self, 'enemies', [])):
                             if enemy.is_alive and not getattr(enemy, 'is_dying', False) and attack_rect.colliderect(enemy.rect):
-                                if hasattr(enemy, 'on_killed_by_player'):
+                                # Boss takes damage instead of instant death
+                                if isinstance(enemy, Boss):
+                                    if hasattr(enemy, 'take_damage'):
+                                        enemy.take_damage(1)
+                                elif hasattr(enemy, 'on_killed_by_player'):
                                     enemy.on_killed_by_player()
                 
                 if self.player.is_alive:
@@ -774,6 +858,11 @@ class Game:
 
             for enemy in getattr(self, 'enemies', []):
                 enemy.draw(self.game_surface, final_offset_x, final_offset_y)
+            
+            # Draw boss spells (above enemies, below player)
+            for enemy in getattr(self, 'enemies', []):
+                if isinstance(enemy, Boss):
+                    enemy.draw_spells(self.game_surface, final_offset_x, final_offset_y)
 
             # --- DEBUG DRAW ---
             if self.debug_draw:
@@ -891,10 +980,17 @@ class Game:
             if self.game_state == 'main_menu':
                 UI.draw_text(self, "Dual Dimension", 80, (255, 255, 255), SCREEN_WIDTH / 2, SCREEN_HEIGHT / 4, shadow_color=(20, 20, 20))
                 
-                start_color = (150, 150, 150) if start_button_rect.collidepoint(mouse_pos) else (100, 100, 100)
-                pygame.draw.rect(self.screen, start_color, start_button_rect, border_radius=10)
-                UI.draw_text(self, "Mulai", 32, (255, 255, 255), start_button_rect.centerx, start_button_rect.centery)
+                # Continue button
+                continue_color = (150, 150, 150) if continue_button_rect.collidepoint(mouse_pos) else (100, 100, 100)
+                pygame.draw.rect(self.screen, continue_color, continue_button_rect, border_radius=10)
+                UI.draw_text(self, "Lanjutkan", 32, (255, 255, 255), continue_button_rect.centerx, continue_button_rect.centery)
                 
+                # New game button
+                new_game_color = (150, 150, 150) if new_game_button_rect.collidepoint(mouse_pos) else (100, 100, 100)
+                pygame.draw.rect(self.screen, new_game_color, new_game_button_rect, border_radius=10)
+                UI.draw_text(self, "Mulai Baru", 32, (255, 255, 255), new_game_button_rect.centerx, new_game_button_rect.centery)
+                
+                # Exit button
                 exit_color = (150, 150, 150) if exit_button_rect.collidepoint(mouse_pos) else (100, 100, 100)
                 pygame.draw.rect(self.screen, exit_color, exit_button_rect, border_radius=10)
                 UI.draw_text(self, "Keluar", 32, (255, 255, 255), exit_button_rect.centerx, exit_button_rect.centery)
