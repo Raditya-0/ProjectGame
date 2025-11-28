@@ -100,6 +100,26 @@ def load_font_rel(path_in_assets: str, size=22):
     fpath = project_root_from_this_file() / "assets" / path_in_assets
     return pygame.font.Font(str(fpath), size)
 
+# NPC Type Configuration
+NPC_TYPES = {
+    'A': {'variant': 'oldman', 'dim': 'normal'},
+    'a': {'variant': 'oldman', 'dim': 'normal'},
+    'Q': {'variant': 'bearded', 'dim': 'normal'},
+    'q': {'variant': 'bearded', 'dim': 'normal'},
+    'W': {'variant': 'hat-man', 'dim': 'normal'},
+    'w': {'variant': 'hat-man', 'dim': 'normal'},
+}
+
+# Gema variants
+NPC_TYPES_GEMA = {
+    'A': {'variant': 'woman', 'dim': 'gema'},
+    'a': {'variant': 'woman', 'dim': 'gema'},
+    'Q': {'variant': 'bearded', 'dim': 'gema'},
+    'q': {'variant': 'bearded', 'dim': 'gema'},
+    'W': {'variant': 'hat-man', 'dim': 'gema'},
+    'w': {'variant': 'hat-man', 'dim': 'gema'},
+}
+
 class NPC(Entity):
     def __init__(self, x, y, variant="oldman", dialog_lines=None, patrol=None,
                  font_path="fonts/freesansbold.ttf", dim='both', auto_snap=True):
@@ -227,3 +247,57 @@ class NPC(Entity):
         for surf in text_surfaces:
             screen.blit(surf, (x, current_y))
             current_y += line_height + 5
+    
+    @staticmethod
+    def spawn_from_maps(normal_spawns: dict, gema_spawns: dict) -> list:
+        """
+        Spawn NPCs from map data.
+        
+        Args:
+            normal_spawns: Dict dengan keys 'A', 'Q', 'W' berisi list spawn info
+            gema_spawns: Dict dengan keys 'A', 'Q', 'W' berisi list spawn info
+            
+        Returns:
+            List of NPC instances
+        """
+        npcs = []
+        
+        # Process normal map spawns
+        for npc_char, spawn_list in normal_spawns.items():
+            config = NPC_TYPES.get(npc_char)
+            if not config:
+                continue
+                
+            for spawn_info in spawn_list:
+                spawn_rect = spawn_info['rect']
+                facing = spawn_info['facing']
+                
+                npc = NPC(
+                    spawn_rect.x,
+                    spawn_rect.y,
+                    variant=config['variant'],
+                    dim=config['dim']
+                )
+                npc.direction = -1 if facing == 'left' else 1
+                npcs.append(npc)
+        
+        # Process gema map spawns
+        for npc_char, spawn_list in gema_spawns.items():
+            config = NPC_TYPES_GEMA.get(npc_char)
+            if not config:
+                continue
+                
+            for spawn_info in spawn_list:
+                spawn_rect = spawn_info['rect']
+                facing = spawn_info['facing']
+                
+                npc = NPC(
+                    spawn_rect.x,
+                    spawn_rect.y,
+                    variant=config['variant'],
+                    dim=config['dim']
+                )
+                npc.direction = -1 if facing == 'left' else 1
+                npcs.append(npc)
+        
+        return npcs
