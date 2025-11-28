@@ -7,12 +7,12 @@ from exception import AssetLoadError
 
 class BossSpell:
     """Spell effect that appears above player position and stays in place."""
-    def __init__(self, x: int, y: int, frames: list[pygame.Surface]):
+    def __init__(self, x: int, y: int, frames: list[pygame.Surface], start_frame: int = 0):
         self.x = x
         self.y = y
         self.frames = frames
-        self.frame_index = 0.0
-        self.animation_speed = 0.40
+        self.frame_index = float(start_frame)  # Start from specific frame for sync
+        self.animation_speed = 1.0  # Faster animation speed for smooth playback
         self.animation_finished = False
         self.is_active = True
         self.damage_dealt = False
@@ -20,12 +20,12 @@ class BossSpell:
         # Spell only deals damage on frames 6-12 (index 5-11)
         self.damage_frames = set(range(5, 12))  # frames 6-12 (0-indexed = 5-11)
         
-        # Hazard rect for collision
+        # Hazard rect for collision - spell is 40x100, use most of it for damage
         if frames:
-            w, h = frames[0].get_size()
-            self.hazard_rect = pygame.Rect(x, y, w, h)
+            # Use most of the spell sprite as damage area: 30x80 centered
+            self.hazard_rect = pygame.Rect(x + 5, y + 10, 30, 80)
         else:
-            self.hazard_rect = pygame.Rect(x, y, 40, 60)
+            self.hazard_rect = pygame.Rect(x + 5, y + 10, 30, 80)
     
     def is_hazardous(self) -> bool:
         """Check if spell is currently in damage frames."""
@@ -96,8 +96,8 @@ class Boss(Entity):
                 files.sort()
                 for f in files:
                     img = pygame.image.load(os.path.join(spell_dir, f)).convert_alpha()
-                    # Scale spell to reasonable size
-                    img = pygame.transform.scale(img, (80, 100))
+                    # Scale spell to 40x100
+                    img = pygame.transform.scale(img, (40, 80))
                     spell_frames.append(img)
         except Exception as e:
             print(str(AssetLoadError(spell_dir, e)))
@@ -140,7 +140,7 @@ class Boss(Entity):
         # Boss stats
         self.health = 10
         self.is_dying = False
-        self.blocks_player = False  # Boss doesn't hard-block player, let them pass through
+        self.blocks_player = True  # Boss has invisible wall to block player
         
         # AI behavior
         self.alerted = False
@@ -207,18 +207,19 @@ class Boss(Entity):
         self.state = 'cast'
         self.frame_index = 0
         self.animation_finished = False
-        self.cast_target_x = target_x
-        self.cast_target_y = target_y
+        self.cast_target_x = target_x  # Player's horizontal position
+        self.cast_target_y = target_y  # Ground level (boss's bottom)
         self.velocity.x = 0
         self.last_cast_time = pygame.time.get_ticks()
     
-    def _spawn_spell(self):
+    def _spawn_spell(self, start_frame: int = 0):
         """Spawn spell effect at target position."""
-        # Spell appears above the target position
-        spell_x = self.cast_target_x - 40  # Center spell horizontally
-        spell_y = self.cast_target_y - 60  # Appear above player (lowered by 20px from original)
+        # X follows player horizontal position, Y spawns from ground level
+        # Spell is 40x100, so adjust centering offset
+        spell_x = self.cast_target_x - 20  # Center spell sprite visually on player (half of 40)
+        spell_y = self.cast_target_y - 80  # Spell appears above ground (100px from boss ground level)
         
-        spell = BossSpell(spell_x, spell_y, self.spell_frames)
+        spell = BossSpell(spell_x, spell_y, self.spell_frames, start_frame=start_frame)
         self.active_spells.append(spell)
     
     def compute_state(self) -> str:
@@ -250,11 +251,10 @@ class Boss(Entity):
             self.velocity.x = 0
             self.step(platforms)
             
-            # Spawn spell early in cast animation (frame 2-3) so there's no visual delay
-            cast_frame_count = len(self.animations.get('cast', []))
-            spawn_frame = 2 if cast_frame_count > 3 else 0  # Spawn at frame 2 or 3
-            if int(self.frame_index) == spawn_frame and not hasattr(self, '_spell_spawned_this_cast'):
-                self._spawn_spell()
+            # Spawn spell at frame 6 so spell starts from frame 0
+            # This way spell damage frames (6-12) align with boss cast motion
+            if int(self.frame_index) == 6 and not hasattr(self, '_spell_spawned_this_cast'):
+                self._spawn_spell(start_frame=0)
                 self._spell_spawned_this_cast = True
             
             if self.animation_finished:
@@ -297,7 +297,8 @@ class Boss(Entity):
                 
                 # Priority 2: Cast spell if available
                 if self._can_cast_spell() and not self.is_casting:
-                    self._start_cast(player.rect.centerx, player.rect.top)
+                    # X follows player, Y is at boss's ground level (boss.rect.bottom)
+                    self._start_cast(player.rect.centerx, self.rect.bottom)
                     return
                 
                 # Walk towards player if not attacking/casting
@@ -389,6 +390,47 @@ class Boss(Entity):
         left = int(cx - width // 2)
         top = int(cy - height // 2)
         return pygame.Rect(left, top, width, height)
+    
+    def get_invisible_wall_rect(self) -> pygame.Rect:
+        """Get invisible wall rect that blocks player from passing through boss easily.
+        
+        Wall dimensions from sprite:
+        - Left edge: 92px from left of sprite
+        - Width: 27px (ending at 119px from left)
+        - Height: 55px from bottom of sprite
+        """
+        # Get sprite dimensions and flip state
+        flip = (self.direction == -1 and self.base_faces_right) or (self.direction == 1 and not self.base_faces_right)
+        sprite_width = 140  # Boss sprite width
+        sprite_height = 93  # Boss sprite height
+        
+        # Character center is at 105px from left edge of sprite
+        sprite_center_offset = 105
+        
+        # Calculate sprite's left position
+        if flip:
+            anchor_x = sprite_width - sprite_center_offset
+        else:
+            anchor_x = sprite_center_offset
+        
+        sprite_left = self.rect.centerx - anchor_x
+        sprite_bottom = self.rect.bottom
+        
+        # Wall position relative to sprite
+        if flip:
+            # When flipped, mirror the wall position
+            # Original: 92px from left, becomes (140 - 92 - 27) = 21px from left when flipped
+            wall_left_offset = sprite_width - 92 - 27
+        else:
+            # Normal: 92px from left of sprite
+            wall_left_offset = 92
+        
+        wall_x = sprite_left + wall_left_offset
+        wall_y = sprite_bottom - 55  # 55px up from bottom
+        wall_width = 27
+        wall_height = 55
+        
+        return pygame.Rect(wall_x, wall_y, wall_width, wall_height)
     
     def take_damage(self, amount: int = 1):
         """Boss takes damage from player attack."""
