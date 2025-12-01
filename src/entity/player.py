@@ -2,21 +2,25 @@ import os
 import pygame
 from settings import *
 from entity.entity import Entity
+from exception import AssetLoadError, SpriteSheetError
 
 base_path = os.path.dirname(os.path.abspath(__file__))
-# entity/player.py is under src/entity, while Assets/ is at the repo root alongside src/
 project_root = os.path.abspath(os.path.join(base_path, '..', '..'))
 assets_path = os.path.join(project_root, 'Assets')
 
 class Player(Entity):
     def __init__(self, x, y):
         self._load_animations_from_spritesheet()
+        self._load_attack_animations()
+        self.non_looping_states = {'death', 'attack1', 'attack2'}
         initial_image = self.animations['idle'][0]
         super().__init__(x, y, initial_image)
         
-        # Player-specific extra state
         self.hearts = PLAYER_START_HEARTS
         self.in_gema_dimension = False
+
+        self.attack_state: str | None = None
+        self.combo_buffer: bool = False
 
     def _load_animations_from_spritesheet(self):
         self.animations = {'idle': [], 'run': [], 'jump': [], 'fall': [], 'death': []}
@@ -33,7 +37,7 @@ class Player(Entity):
                 frame_surface.blit(idle_sheet, (0, 0), (x_pos, top_margin, frame_width, frame_height))
                 self.animations['idle'].append(frame_surface)
         except Exception as e:
-            print(f"Error memuat idle sheet: {e}")
+            print(str(SpriteSheetError(os.path.join(player_asset_path, '_Idle.png'), e)))
             self.animations['idle'].append(pygame.Surface((21, 38)))
 
         try:
@@ -47,7 +51,7 @@ class Player(Entity):
                 frame_surface.blit(run_sheet, (0, 0), (x_pos, top_margin, frame_width, frame_height))
                 self.animations['run'].append(frame_surface)
         except Exception as e:
-            print(f"Error memuat run sheet: {e}")
+            print(str(SpriteSheetError(os.path.join(player_asset_path, '_Run.png'), e)))
             self.animations['run'].append(pygame.Surface((30, 40)))
             
         try:
@@ -61,7 +65,7 @@ class Player(Entity):
                 frame_surface.blit(jump_sheet, (0, 0), (x_pos, top_margin, frame_width, frame_height))
                 self.animations['jump'].append(frame_surface)
         except Exception as e:
-            print(f"Error memuat jump sheet: {e}")
+            print(str(SpriteSheetError(os.path.join(player_asset_path, '_Jump.png'), e)))
             self.animations['jump'].append(pygame.Surface((30, 40)))
             
         try:
@@ -75,7 +79,7 @@ class Player(Entity):
                 frame_surface.blit(fall_sheet, (0, 0), (x_pos, top_margin, frame_width, frame_height))
                 self.animations['fall'].append(frame_surface)
         except Exception as e:
-            print(f"Error memuat fall sheet: {e}")
+            print(str(SpriteSheetError(os.path.join(player_asset_path, '_Fall.png'), e)))
             self.animations['fall'].append(pygame.Surface((30, 40)))
 
         frame_count = 10
@@ -87,15 +91,48 @@ class Player(Entity):
                 file_name = f'_Death{i}.png'
                 full_path = os.path.join(asset_folder, file_name)
 
-                # Load the image and convert it for better performance
                 frame_surface = pygame.image.load(full_path).convert_alpha()
                 self.animations['death'].append(frame_surface)
 
             print("Death animation loaded successfully.")
 
         except Exception as e:
-            print(f"Error loading death animation: {e}")
+            print(str(AssetLoadError(os.path.join(asset_folder, '_Death#.png'), e)))
             self.animations['death'].append(pygame.Surface((30, 40), pygame.SRCALPHA))
+
+    def _load_attack_animations(self):
+        player_asset_path = os.path.join(assets_path, 'Player')
+        attack1_dir = os.path.join(player_asset_path, 'Attack')
+        attack2_dir = os.path.join(player_asset_path, 'Attack2')
+
+        self.animations.setdefault('attack1', [])
+        self.animations.setdefault('attack2', [])
+
+        def load_frames(folder: str) -> list[pygame.Surface]:
+            frames: list[pygame.Surface] = []
+            try:
+                if os.path.isdir(folder):
+                    names = [f for f in os.listdir(folder) if f.lower().endswith('.png')]
+                    names.sort()
+                    for name in names:
+                        img = pygame.image.load(os.path.join(folder, name)).convert_alpha()
+                        frames.append(img)
+                else:
+                    raise FileNotFoundError(folder)
+            except Exception as e:
+                print(str(AssetLoadError(folder, e)))
+            return frames
+
+        attack1_frames = load_frames(attack1_dir)
+        attack2_frames = load_frames(attack2_dir)
+
+        if not attack1_frames:
+            attack1_frames = [pygame.Surface((30, 40), pygame.SRCALPHA)]
+        if not attack2_frames:
+            attack2_frames = [pygame.Surface((30, 40), pygame.SRCALPHA)]
+
+        self.animations['attack1'] = attack1_frames
+        self.animations['attack2'] = attack2_frames
 
     def _get_input(self):
         if not self.is_alive: return
@@ -130,14 +167,13 @@ class Player(Entity):
                 elif self.velocity.y < 0: self.rect.top = platform.bottom; self.velocity.y = 0
 
     def compute_state(self) -> str:
-        # Decide animation state based on physics and intent
         if not self.is_alive:
             return 'death'
+        if self.attack_state in ('attack1', 'attack2'):
+            return self.attack_state
         if not self.is_on_ground:
             return 'jump' if self.velocity.y < 0 else 'fall'
         return 'run' if getattr(self, 'is_walking', False) else 'idle'
-
-    # Animation is handled by Entity.animate(); 'death' is non-looping by default
 
     def jump(self):
         if self.is_on_ground and self.is_alive: self.velocity.y = -JUMP_STRENGTH
@@ -176,16 +212,39 @@ class Player(Entity):
             self.hearts = PLAYER_START_HEARTS
 
     def update(self, platforms):
-        # Read input first, then apply physics, then animate. This keeps input responsive.
         self._get_input()
+        if self.attack_state is not None:
+            self.velocity.x = 0
+        self._update_attack_state_machine()
         self.step(platforms)
 
-    def handle_event(self, event):
-        """Handle incoming pygame events relevant for the player.
+    def draw(self, screen: pygame.Surface, camera_offset_x: float, camera_offset_y: float):
+        img = self.image
+        if self.direction == -1:
+            img = pygame.transform.flip(img, True, False)
 
-        This keeps per-player input handling inside the Player class and allows
-        `main.py` to be focused on game flow.
-        """
+        draw_x = self.rect.x - camera_offset_x
+        draw_y = (self.rect.bottom - img.get_height()) - camera_offset_y
+        if getattr(self, 'state', '') in ['attack1', 'attack2']:
+            # Align attack pose: mirror offset by facing
+            attack_shift = 0
+            draw_x += attack_shift if self.direction == 1 else -attack_shift
+
+        screen.blit(img, (draw_x, draw_y))
+
+    # Combat helpers
+    def is_attack_active(self) -> bool:
+        return (self.attack_state in ('attack1', 'attack2')) and not getattr(self, 'animation_finished', False)
+
+    def get_attack_hitbox(self, width: int = 20) -> pygame.Rect | None:
+        if not self.is_attack_active():
+            return None
+        if self.direction == 1:
+            return pygame.Rect(self.rect.right, self.rect.top, width, self.rect.height)
+        else:
+            return pygame.Rect(self.rect.left - width, self.rect.top, width, self.rect.height)
+
+    def handle_event(self, event):
         if not self.is_alive: return
 
         if event.type == pygame.KEYDOWN:
@@ -193,28 +252,44 @@ class Player(Entity):
                 self.jump()
             if event.key in [pygame.K_LSHIFT, pygame.K_RSHIFT]:
                 self.shift_dimension()
+        elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            if self.attack_state is None:
+                self._start_attack('attack1')
+            elif self.attack_state == 'attack1':
+                self.combo_buffer = True
+
+    def _start_attack(self, which: str):
+        if which not in ('attack1', 'attack2'):
+            return
+        self.attack_state = which
+        self.state = which
+        self.animation_finished = False
+        self.frame_index = 0
+
+    def _end_attack(self):
+        self.attack_state = None
+        self.combo_buffer = False
+
+    def _update_attack_state_machine(self):
+        if self.attack_state == 'attack1':
+            if self.state == 'attack1' and getattr(self, 'animation_finished', False):
+                if self.combo_buffer and len(self.animations.get('attack2', [])) > 0:
+                    self.combo_buffer = False
+                    self._start_attack('attack2')
+                else:
+                    self._end_attack()
+        elif self.attack_state == 'attack2':
+            if self.state == 'attack2' and getattr(self, 'animation_finished', False):
+                self._end_attack()
 
     def apply_hazards(self, hazard_rects, fall_limit_y, is_invincible=False):
-        """Check and apply damage from environment hazards.
-
-        Inputs:
-        - hazard_rects: iterable of pygame.Rect that can damage the player
-        - fall_limit_y: y threshold beyond which falling counts as damage
-        - is_invincible: if True, ignores incoming damage (e.g., spawn i-frames)
-
-        Returns a dict when damage was applied, else None. Example:
-        { 'source': 'trap'|'fall', 'temporary_death': True|False, 'delay_ms': int }
-        temporary_death=True means hearts remain but we play death anim + respawn delay.
-        """
         if is_invincible or not self.is_alive:
             return None
 
         damage_source = None
-        # Fall off-screen check
         if self.rect.top > fall_limit_y:
             damage_source = 'fall'
         else:
-            # Trap collision check
             for r in hazard_rects:
                 if self.rect.colliderect(r):
                     damage_source = 'trap'
@@ -223,14 +298,11 @@ class Player(Entity):
         if not damage_source:
             return None
 
-        # Apply damage and decide death behavior
         self.take_damage()
 
         if not self.is_alive:
-            # Hearts <= 0 inside take_damage() already called die()
             return {'source': damage_source, 'temporary_death': False, 'delay_ms': 0}
 
-        # Temporary death: play death animation and request respawn delay
         self.die()
         delay_ms = 500 if damage_source in ('fall', 'trap') else 500
         return {'source': damage_source, 'temporary_death': True, 'delay_ms': delay_ms}
