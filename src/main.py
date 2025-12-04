@@ -541,7 +541,7 @@ class Game:
                     current_dim = 'gema' if self.player.in_gema_dimension else 'normal'
                     for npc in self.npcs:
                         if getattr(npc, 'dim', 'both') in (current_dim, 'both'):
-                            npc.handle_event(event)
+                            npc.handle_event(event, getattr(self, 'player').rect if hasattr(self, 'player') else None)
 
 
                 
