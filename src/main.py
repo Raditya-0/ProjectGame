@@ -1,953 +1,707 @@
+"""
+Main Game - Entry point dan main game loop.
+Refactored untuk lebih modular dengan separation of concerns.
+"""
 import pygame
-from settings import *
-import assets
-from entity.player import Player
-from parallax import ParallaxLayer, ParallaxObject
-from entity.enemy import PatrollingEnemy, ChaserEnemy
-from entity.boss import Boss
-from environment.trap import load_spike_frames, TriggerTrap
-from environment.campfire import load_campfire_frames, Campfire
-from save_manager import SaveManager
 import os
-from exception import AssetLoadError, LevelFileNotFound, AudioLoadError
-import UI as UI
+
+# Core controllers
+from core.game_state import GameStateController, GameStateEnum
+from core.level_controller import LevelController
+from core.entity_manager import EntityManager
+from core.camera_controller import CameraController
+from core.asset_loader import AssetLoader
+
+# Game systems
+from environment.trap import TriggerTrap
+from environment.campfire import Campfire
+from graphics.parallax import ParallaxLayer, ParallaxObject
 from entity.npc import NPC
+from entity.boss import Boss
+from entity.enemy import PatrollingEnemy, ChaserEnemy
+
+# Managers and settings
+from managers.save_manager import SaveManager
+from graphics import UI
+from utils.settings import *
+from utils.exception import AssetLoadError, AudioLoadError
 
 
-base_path = os.path.dirname(os.path.abspath(__file__))
 class Game:
+    """Main game class - orchestrates all game systems."""
+    
     def __init__(self):
+        # Initialize Pygame
         pygame.init()
         pygame.mixer.init()
+        
+        # Display setup
         self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
         self.game_surface_width = SCREEN_WIDTH // CAMERA_ZOOM_DIVIDER
         self.game_surface_height = SCREEN_HEIGHT // CAMERA_ZOOM_DIVIDER
         self.game_surface = pygame.Surface((self.game_surface_width, self.game_surface_height))
         pygame.display.set_caption(TITLE)
+        
+        # Core systems
         self.clock = pygame.time.Clock()
         self.running = True
         self.font = pygame.font.Font(None, 40)
-        self.game_state = 'main_menu'
-        self.prev_game_state = 'main_menu'
         
-        # Save manager for progress tracking
+        # Controllers
+        base_path = os.path.dirname(os.path.abspath(__file__))
+        self.state_controller = GameStateController()
+        self.level_controller = LevelController(os.path.join(base_path, "levels"))
+        self.entity_manager = EntityManager()
+        self.camera = CameraController(
+            self.game_surface_width, 
+            self.game_surface_height,
+            CAMERA_MANUAL_OFFSET_X,
+            CAMERA_MANUAL_OFFSET_Y
+        )
+        
+        # Asset loader
+        assets_path = os.path.join(base_path, '..', 'Assets')
+        self.asset_loader = AssetLoader(assets_path)
+        
+        # Save manager
         self.save_manager = SaveManager()
         
-        self.spike_frames = []
+        # Level data
+        self.platforms = []
+        self.trigger_traps = []
+        self.end_triggers = []
+        self.level_width_pixels = 0
+        
+        # Cached level data to prevent re-parsing
+        self._cached_normal_data = None
+        self._cached_gema_data = None
+        
+        # Parallax
         self.parallax_layers = []
+        self.moon_object = None
+        self.moon_shadow_object = None
         
-        self.levels = [
-            (os.path.join(base_path, "levels", "level_1_normal.txt"), os.path.join(base_path, "levels", "level_1_gema.txt")),
-            (os.path.join(base_path, "levels", "level_2_normal.txt"), os.path.join(base_path, "levels", "level_2_gema.txt")),
-            (os.path.join(base_path, "levels", "level_3_normal.txt"), os.path.join(base_path, "levels", "level_3_gema.txt")),
-            (os.path.join(base_path, "levels", "level_4_normal.txt"), os.path.join(base_path, "levels", "level_4_gema.txt"))
-        ]
-        self.load_assets()
-        self.current_level_index = 0
-        
+        # Game state
         self.spawn_invincibility_timer = 0
         self.spawn_invincibility_duration = 10
         self.death_delay_timer = 0
         self.death_delay_start_time = 0
         self.is_in_death_delay = False
-
-        self.is_music_paused = False
-        self.is_settings_open = False
-
-        self.end_triggers = []
+        
+        # End sequence state
         self.end_sequence_active = False
         self.end_sequence_mode = None
         self.end_sequence_dir = 1
         self.end_jump_started = False
         self.input_locked = False
-        self.camera_lock_active = False
-        self.camera_lock_center_x = 0
-        self.camera_right_limit_x = None
-        self.level_width_pixels = 0
+        
+        # Settings
+        self.is_music_paused = False
+        self.is_settings_open = False
         self.debug_draw = DEBUG_DRAW_HITBOXES
-
-    def load_assets(self):
-        assets_path = os.path.join(base_path, '..', 'Assets')
-        self.heart_icon = assets.create_heart_surface()
+        
+        # Click cooldown to prevent spam clicking
+        self.last_click_time = 0
+        self.click_cooldown_ms = 300  # 300ms between clicks
+        
+        # Initialize
+        self._load_initial_assets()
+    
+    def _load_initial_assets(self):
+        """Load all game assets."""
         try:
-            self.tile_images = {
-                'G': pygame.image.load(os.path.join(assets_path, 'Tiles', 'ground.png')).convert_alpha(),
-                'P': pygame.image.load(os.path.join(assets_path, 'Tiles', 'platform.png')).convert_alpha(),
-            }
-        except pygame.error as e:
-            print(str(AssetLoadError("Tiles (ground/platform)", e)))
+            self.asset_loader.load_all_assets(self.game_surface_height)
+            self.asset_loader.load_music('music_platformer.ogg')
+        except (AssetLoadError, AudioLoadError) as e:
+            print(f"Asset loading error: {e}")
             self.running = False
-
-        # Load spike frames via environment helper
-        self.spike_frames = load_spike_frames(assets_path)
-
-        self.forest_layers_images = []
-        try:
-            for i in range(10):
-                path = os.path.join(assets_path, 'Background', f'forest_layer_{i}.png')
-                image = pygame.image.load(path).convert_alpha()
-                scaled_image = pygame.transform.scale(image, (self.game_surface_height * image.get_width() / image.get_height(), self.game_surface_height))
-                self.forest_layers_images.append(scaled_image)
-        except pygame.error as e:
-            print(str(AssetLoadError("Background forest layers", e)))
-            self.running = False
-
-        try:
-            self.moon_image = pygame.image.load(os.path.join(assets_path, 'Background', 'moon.png')).convert_alpha()
-            self.moon_shadow_image = pygame.image.load(os.path.join(assets_path, 'Background', 'moon_shadow.png')).convert_alpha()
-        except pygame.error as e:
-            print(str(AssetLoadError("Background moon/moon_shadow", e)))
-            self.running = False
-
-        # Load campfire frames via environment helper
-        self.campfire_frames = load_campfire_frames(assets_path)
-
-
-    def setup_level(self, normal_map_file, gema_map_file, new_game=False):
+    
+    def setup_level(self, new_game=False, force_reparse=False):
+        """Setup current level from level controller."""
         if new_game:
             self.platforms = []
-            self.traps = []
             self.trigger_traps = []
             self.end_triggers = []
-            self.door_rect = None
-            self.campfires = []
-            self.enemies = []
-            self.enemy_spawns = []
-            self.camera_right_limit_x = None
+            self.camera.set_right_limit(None)
             self.level_width_pixels = 0
-            self.npcs = [] 
-
-        tile_size = 40
-
-        triggers_pos = {'normal': [], 'gema': []}
-        trap_zones_pos = {'normal': [], 'gema': []}
-        npc_spawns_normal = {'A': [], 'Q': [], 'W': []}
-        npc_spawns_gema = {'A': [], 'Q': [], 'W': []}
-
-        try:
-            left_markers_normal = {}
-            right_markers_normal = {}
-            enemy_spawns_normal = []
-            max_world_x = 0
-
-            with open(normal_map_file, 'r') as file:
-                for y, line in enumerate(file):
-                    for x, char in enumerate(line):
-                        world_x, world_y = x * tile_size, y * tile_size
-                        rect = pygame.Rect(world_x, world_y, tile_size, tile_size)
-                        if world_x > max_world_x:
-                            max_world_x = world_x
-
-                        if char in 'Gg':
-                            self.platforms.append({'rect': rect, 'dim': 'both', 'char': 'G'})
-                        elif char in 'Pp':
-                            plat_rect = pygame.Rect(world_x, world_y, tile_size, 20)
-                            self.platforms.append({'rect': plat_rect, 'dim': 'normal', 'char': 'P'})
-                        elif char in 'Hh':
-                            facing = 'right' if char == 'H' else 'left'
-                            enemy_spawns_normal.append({'rect': rect, 'type': 'patrol', 'facing': facing})
-                        elif char in 'Tt':
-                            triggers_pos['normal'].append(rect)
-                        elif char in 'Nn':
-                            facing = 'right' if char == 'N' else 'left'
-                            enemy_spawns_normal.append({'rect': rect, 'type': 'chaser_heavy', 'facing': facing})
-                        elif char in 'jJ':
-                            trap_zones_pos['normal'].append(rect)
-                        elif char in 'yY':
-                            trap_zones_pos['normal'].append(rect)
-                        elif char in 'Ss':
-                            self.start_pos = (world_x, world_y + tile_size)
-                        elif char == 'D':
-                            self.end_triggers.append({'rect': rect, 'dim': 'normal', 'mode': 'jump_walk'})
-                        elif char == 'd':
-                            self.end_triggers.append({'rect': rect, 'dim': 'normal', 'mode': 'walk'})
-                        elif char in 'Cc':
-                            self.campfires.append(Campfire(rect))
-                        elif char in 'Ff':
-                            facing = 'right' if char == 'F' else 'left'
-                            enemy_spawns_normal.append({'rect': rect, 'type': 'chaser', 'facing': facing})
-                        elif char in 'Bb':
-                            facing = 'right' if char == 'B' else 'left'
-                            enemy_spawns_normal.append({'rect': rect, 'type': 'boss', 'facing': facing})
-                        elif char in 'lL':
-                            left_markers_normal.setdefault(y, []).append(world_x + tile_size // 2)
-                        elif char in 'rR':
-                            right_markers_normal.setdefault(y, []).append(world_x + tile_size // 2)
-                        elif char in 'Aa':
-                            facing = 'left' if char == 'A' else 'right'
-                            npc_spawns_normal['A'].append({'rect': rect, 'facing': facing})
-                        elif char in 'Qq':
-                            facing = 'left' if char == 'Q' else 'right'
-                            npc_spawns_normal['Q'].append({'rect': rect, 'facing': facing})
-                        elif char in 'Ww':
-                            facing = 'left' if char == 'W' else 'right'
-                            npc_spawns_normal['W'].append({'rect': rect, 'facing': facing})
-                        elif char == 'K':
-                            self.camera_right_limit_x = world_x + tile_size // 2
-            self.level_width_pixels = max(self.level_width_pixels, max_world_x + tile_size)
-        except FileNotFoundError:
-            print(str(LevelFileNotFound(normal_map_file)))
-            self.running = False; return
-
-        try:
-            left_markers_gema = {}
-            right_markers_gema = {}
-            enemy_spawns_gema = []
-            max_world_x_gema = 0
-
-            with open(gema_map_file, 'r') as file:
-                for y, line in enumerate(file):
-                    for x, char in enumerate(line):
-                        world_x, world_y = x * tile_size, y * tile_size
-                        rect = pygame.Rect(world_x, world_y, tile_size, tile_size)
-                        if world_x > max_world_x_gema:
-                            max_world_x_gema = world_x
-
-                        if char in 'Gg':
-                            self.platforms.append({'rect': rect, 'dim': 'gema', 'char': 'G'})
-                        elif char in 'Pp':
-                            plat_rect = pygame.Rect(world_x, world_y, tile_size, 20)
-                            self.platforms.append({'rect': plat_rect, 'dim': 'gema', 'char': 'P'})
-                        elif char in 'Hh':
-                            facing = 'right' if char == 'H' else 'left'
-                            enemy_spawns_gema.append({'rect': rect, 'type': 'patrol', 'facing': facing})
-                        elif char in 'Tt':
-                            triggers_pos['gema'].append(rect)
-                        elif char in 'Nn':
-                            facing = 'right' if char == 'N' else 'left'
-                            enemy_spawns_gema.append({'rect': rect, 'type': 'chaser_heavy', 'facing': facing})
-                        elif char in 'jJ':
-                            trap_zones_pos['gema'].append(rect)
-                        elif char in 'yY':
-                            trap_zones_pos['gema'].append(rect)
-                        elif char in 'Cc':
-                            self.campfires.append(Campfire(rect))
-                        elif char in 'Ff':
-                            facing = 'right' if char == 'F' else 'left'
-                            enemy_spawns_gema.append({'rect': rect, 'type': 'chaser', 'facing': facing})
-                        elif char in 'Bb':
-                            facing = 'right' if char == 'B' else 'left'
-                            enemy_spawns_gema.append({'rect': rect, 'type': 'boss', 'facing': facing})
-                        elif char == 'D':
-                            self.end_triggers.append({'rect': rect, 'dim': 'gema', 'mode': 'jump_walk'})
-                        elif char == 'd':
-                            self.end_triggers.append({'rect': rect, 'dim': 'gema', 'mode': 'walk'})
-                        elif char in 'lL':
-                            left_markers_gema.setdefault(y, []).append(world_x + tile_size // 2)
-                        elif char in 'rR':
-                            right_markers_gema.setdefault(y, []).append(world_x + tile_size // 2)
-                        elif char in 'Aa':
-                            facing = 'left' if char == 'A' else 'right'
-                            npc_spawns_gema['A'].append({'rect': rect, 'facing': facing})
-                        elif char in 'Qq':
-                            facing = 'left' if char == 'Q' else 'right'
-                            npc_spawns_gema['Q'].append({'rect': rect, 'facing': facing})
-                        elif char in 'Ww':
-                            facing = 'left' if char == 'W' else 'right'
-                            npc_spawns_gema['W'].append({'rect': rect, 'facing': facing})
-                        elif char == 'K':
-                            self.camera_right_limit_x = world_x + tile_size // 2
-            self.level_width_pixels = max(self.level_width_pixels, max_world_x_gema + tile_size)
-        except FileNotFoundError:
-            print(str(LevelFileNotFound(gema_map_file)))
-            self.running = False; return
-
-        seen_spawn_tiles = set()
-
-        def add_enemies_from(spawn_list, left_markers, right_markers):
-            for spawn_info in spawn_list:
-                spawn_rect = spawn_info.get('rect') if isinstance(spawn_info, dict) else spawn_info
-                row = spawn_rect.y // tile_size
-                col = spawn_rect.x // tile_size
-                key = (row, col)
-                if key in seen_spawn_tiles:
-                    continue
-                seen_spawn_tiles.add(key)
-
-                left_list = left_markers.get(row, [])
-                right_list = right_markers.get(row, [])
-
-                sx = spawn_rect.centerx
-                left_bound = max([lx for lx in left_list if lx <= sx], default=sx - 80)
-                right_bound = min([rx for rx in right_list if rx >= sx], default=sx + 80)
-
-                if new_game or not hasattr(self, 'enemy_spawns'):
-                    self.enemy_spawns = getattr(self, 'enemy_spawns', [])
-                stored = {
-                    'x': spawn_rect.x,
-                    'y': spawn_rect.bottom,
-                    'left_bound': left_bound,
-                    'right_bound': right_bound,
-                    'type': spawn_info.get('type', 'patrol') if isinstance(spawn_info, dict) else 'patrol',
-                    'facing': spawn_info.get('facing', 'right') if isinstance(spawn_info, dict) else 'right'
-                }
-                self.enemy_spawns.append(stored)
-
-                etype = stored['type']
-                facing = stored['facing']
-                if etype == 'chaser':
-                    enemy = ChaserEnemy(spawn_rect.x, spawn_rect.bottom, size=(50, 50), speed=2.5, facing=facing)
-                elif etype == 'chaser_heavy':
-                    enemy = ChaserEnemy(spawn_rect.x, spawn_rect.bottom, size=(50, 50), speed=2.2, facing=facing, asset_folder='Heavy Bandit')
-                elif etype == 'boss':
-                    enemy = Boss(spawn_rect.x, spawn_rect.bottom, size=(140, 93), speed=1.5, facing=facing)
-                else:
-                    enemy = PatrollingEnemy(spawn_rect.x, spawn_rect.bottom, left_bound, right_bound, size=(30, 30), speed=2.0)
-                    enemy.direction = 1 if facing == 'right' else -1
-                self.enemies.append(enemy)
-
-        add_enemies_from(enemy_spawns_normal, left_markers_normal, right_markers_normal)
-        add_enemies_from(enemy_spawns_gema, left_markers_gema, right_markers_gema)
+            self.entity_manager.clear_all()
+            self._cached_normal_data = None
+            self._cached_gema_data = None
         
-        for trigger_rect, trap_rect in zip(triggers_pos['normal'], trap_zones_pos['normal']):
-            self.trigger_traps.append(TriggerTrap(trigger_rect, trap_rect, dim='normal'))
+        # Get level file paths
+        normal_path, gema_path = self.level_controller.get_level_paths()
         
-        for trigger_rect, trap_rect in zip(triggers_pos['gema'], trap_zones_pos['gema']):
-            self.trigger_traps.append(TriggerTrap(trigger_rect, trap_rect, dim='gema'))
-
-        if new_game or not hasattr(self, 'player'):
-            if hasattr(self, 'start_pos'):
-                self.player = Player(self.start_pos[0], self.start_pos[1])
-            else:
-                self.player = Player(100, 100)
-                print("Peringatan: 'S' (start position) tidak ditemukan!")
+        # Parse or use cached data
+        if force_reparse or self._cached_normal_data is None or self._cached_gema_data is None:
+            normal_data = self.level_controller.parse_level_file(normal_path)
+            gema_data = self.level_controller.parse_level_file(gema_path)
+            self._cached_normal_data = normal_data
+            self._cached_gema_data = gema_data
         else:
-            self.player.respawn(self.start_pos)
-            
-        # --- NPCs dari map file ---
-        if new_game:
-            self.npcs = NPC.spawn_from_maps(npc_spawns_normal, npc_spawns_gema)
-            
-            # Snap semua NPC ke lantai dimensi masing-masing
-            for npc in self.npcs:
-                dim = npc.dim if npc.dim in ('normal','gema') else 'normal'
-                if getattr(npc, 'auto_snap', True):
-                    self.snap_actor_to_ground(npc.rect, dim=dim, max_dx=200)
-
-
+            normal_data = self._cached_normal_data
+            gema_data = self._cached_gema_data
         
+        # Setup platforms (copy rects to avoid shared references)
+        for p in normal_data['platforms']:
+            self.platforms.append({'rect': p['rect'].copy(), 'dim': 'normal', 'char': p['char']})
+        for p in gema_data['platforms']:
+            self.platforms.append({'rect': p['rect'].copy(), 'dim': 'gema', 'char': p['char']})
+        
+        # Setup trigger traps (copy rects to avoid shared references)
+        for trigger_rect, trap_rect in zip(normal_data['triggers'], normal_data['trap_zones']):
+            self.trigger_traps.append(TriggerTrap(trigger_rect.copy(), trap_rect.copy(), dim='normal'))
+        for trigger_rect, trap_rect in zip(gema_data['triggers'], gema_data['trap_zones']):
+            self.trigger_traps.append(TriggerTrap(trigger_rect.copy(), trap_rect.copy(), dim='gema'))
+        
+        # Setup end triggers (copy rects to avoid shared references)
+        for et in normal_data['end_triggers']:
+            self.end_triggers.append({'rect': et['rect'].copy(), 'dim': 'normal', 'mode': et['mode']})
+        for et in gema_data['end_triggers']:
+            self.end_triggers.append({'rect': et['rect'].copy(), 'dim': 'gema', 'mode': et['mode']})
+        
+        # Setup entities
+        if new_game or not self.entity_manager.player:
+            start_pos = normal_data['start_pos'] or (100, 100)
+            self.entity_manager.create_player(start_pos[0], start_pos[1])
+        
+        # Setup enemies
         if new_game:
-            self.parallax_layers = []
-            speeds = [0.55, 0.5, 0.45, 0.4, 0.35, 0.3, 0.25, 0.2, 0.15, 0.1]
-            for i in range(len(self.forest_layers_images)):
-                if i < len(speeds):
-                    layer = ParallaxLayer(self.forest_layers_images[i], speeds[i])
-                    self.parallax_layers.append(layer)
-
+            self._setup_enemies(normal_data, gema_data)
+            self._setup_npcs(normal_data['npc_spawns'], gema_data['npc_spawns'])
+            self._setup_campfires(normal_data['campfires'], gema_data['campfires'])
+        
+        # Setup parallax
         if new_game:
-            self.parallax_layers = []
-            speeds = [0.55, 0.5, 0.45, 0.4, 0.35, 0.3, 0.25, 0.2, 0.15, 0.1]
-
-            for i in range(len(self.forest_layers_images)):
-                if i < len(speeds):
-                    layer = ParallaxLayer(self.forest_layers_images[i], speeds[i])
-                    self.parallax_layers.append(layer)
-
-            self.moon_object = ParallaxObject(self.moon_image, 0.045, 50, x_offset=150)
-            self.moon_shadow_object = ParallaxObject(self.moon_shadow_image, 0.05, 60, x_offset=160)
-
+            self._setup_parallax()
+        
+        # Camera and level bounds
+        self.level_width_pixels = max(normal_data['max_width'], gema_data['max_width']) + 40
+        if normal_data['camera_right_limit'] or gema_data['camera_right_limit']:
+            limit = normal_data['camera_right_limit'] or gema_data['camera_right_limit']
+            self.camera.set_right_limit(limit)
+        
         self.spawn_invincibility_timer = self.spawn_invincibility_duration
-
-    def handle_triggers(self):
-        if not self.player.is_alive: return
-        current_dimension_str = 'gema' if self.player.in_gema_dimension else 'normal'
-        for trap in self.trigger_traps:
-            trap.try_activate(self.player.rect, current_dimension_str)
-
-        if not self.end_sequence_active:
-            for end_t in self.end_triggers:
-                if end_t['dim'] in [current_dimension_str, 'both'] and self.player.collides(end_t['rect']):
-                    self.start_end_sequence(end_t['mode'])
-                    break
-
-    def update_animated_traps(self):
-        for trap in self.trigger_traps:
-            trap.update(self.spike_frames)
-
-    def update_campfires(self):
-        for campfire in self.campfires:
-            campfire.update(self.campfire_frames)
-
-    def draw_campfires(self, offset_x, offset_y):
-        for campfire in self.campfires:
-            campfire.draw(self.game_surface, offset_x, offset_y, self.campfire_frames)
-
+    
+    def _setup_enemies(self, normal_data, gema_data):
+        """Setup enemies from level data."""
+        tile_size = self.level_controller.tile_size
+        
+        for spawn in normal_data['enemy_spawns']:
+            spawn_rect = spawn['rect']
+            row = spawn_rect.y // tile_size
+            
+            # Calculate patrol bounds
+            left_list = normal_data['left_markers'].get(row, [])
+            right_list = normal_data['right_markers'].get(row, [])
+            sx = spawn_rect.centerx
+            left_bound = max([lx for lx in left_list if lx <= sx], default=sx - 80)
+            right_bound = min([rx for rx in right_list if rx >= sx], default=sx + 80)
+            
+            self.entity_manager.add_enemy(
+                spawn['type'], spawn_rect, spawn['facing'],
+                left_bound, right_bound
+            )
+        
+        for spawn in gema_data['enemy_spawns']:
+            spawn_rect = spawn['rect']
+            row = spawn_rect.y // tile_size
+            
+            left_list = gema_data['left_markers'].get(row, [])
+            right_list = gema_data['right_markers'].get(row, [])
+            sx = spawn_rect.centerx
+            left_bound = max([lx for lx in left_list if lx <= sx], default=sx - 80)
+            right_bound = min([rx for rx in right_list if rx >= sx], default=sx + 80)
+            
+            self.entity_manager.add_enemy(
+                spawn['type'], spawn_rect, spawn['facing'],
+                left_bound, right_bound
+            )
+    
+    def _setup_npcs(self, normal_spawns, gema_spawns):
+        """Setup NPCs from level data."""
+        self.entity_manager.npcs = NPC.spawn_from_maps(normal_spawns, gema_spawns)
+        
+        # Snap NPCs to ground
+        for npc in self.entity_manager.npcs:
+            dim = getattr(npc, 'dim', 'normal')
+            if getattr(npc, 'auto_snap', True):
+                self.snap_actor_to_ground(npc.rect, dim=dim, max_dx=200)
+    
+    def _setup_campfires(self, normal_campfires, gema_campfires):
+        """Setup campfires from level data."""
+        for rect in normal_campfires:
+            self.entity_manager.add_campfire(Campfire(rect))
+        for rect in gema_campfires:
+            self.entity_manager.add_campfire(Campfire(rect))
+    
+    def _setup_parallax(self):
+        """Setup parallax layers."""
+        self.parallax_layers = []
+        speeds = [0.55, 0.5, 0.45, 0.4, 0.35, 0.3, 0.25, 0.2, 0.15, 0.1]
+        
+        for i, image in enumerate(self.asset_loader.forest_layers):
+            if i < len(speeds):
+                layer = ParallaxLayer(image, speeds[i])
+                self.parallax_layers.append(layer)
+        
+        self.moon_object = ParallaxObject(self.asset_loader.moon_image, 0.045, 50, x_offset=150)
+        self.moon_shadow_object = ParallaxObject(self.asset_loader.moon_shadow_image, 0.05, 60, x_offset=160)
+    
     def respawn_player(self):
-        self.player.respawn(self.start_pos)
+        """Respawn player and reset level state."""
+        self.entity_manager.respawn_player()
+        self.entity_manager.respawn_all_enemies()
         self.spawn_invincibility_timer = self.spawn_invincibility_duration
         self.is_in_death_delay = False
+        
+        # Reset end sequence state
+        self.end_sequence_active = False
+        self.input_locked = False
+        self.camera.unlock_camera()
+        
         for trap in self.trigger_traps:
             trap.is_active = False
             trap.frame_index = 0.0
             trap.animation_finished = False
-        self.enemies = []
-        for e_info in getattr(self, 'enemy_spawns', []):
-            etype = e_info.get('type', 'patrol')
-            if etype == 'chaser':
-                facing = e_info.get('facing', 'right')
-                self.enemies.append(ChaserEnemy(e_info['x'], e_info['y'], size=(50, 50), speed=2.5, facing=facing))
-            elif etype == 'chaser_heavy':
-                facing = e_info.get('facing', 'right')
-                self.enemies.append(ChaserEnemy(e_info['x'], e_info['y'], size=(50, 50), speed=2.2, facing=facing, asset_folder='Heavy Bandit'))
-            elif etype == 'boss':
-                facing = e_info.get('facing', 'right')
-                self.enemies.append(Boss(e_info['x'], e_info['y'], size=(140, 93), speed=1.5, facing=facing))
-            else:
-                lb = e_info.get('left_bound')
-                rb = e_info.get('right_bound')
-                facing = e_info.get('facing', 'right')
-                pe = PatrollingEnemy(e_info['x'], e_info['y'], lb, rb, size=(30, 30), speed=2.0)
-                pe.direction = 1 if facing == 'right' else -1
-                self.enemies.append(pe)
-
-    def handle_damage(self):
-        if self.spawn_invincibility_timer > 0 or not self.player.is_alive or self.is_in_death_delay:
+    
+    def quick_restart_level(self):
+        """Quick restart current level without re-parsing files."""
+        print("[DEBUG] Starting quick_restart_level...")
+        
+        # Reset game state flags
+        self.end_sequence_active = False
+        self.input_locked = False
+        self.is_in_death_delay = False
+        self.spawn_invincibility_timer = self.spawn_invincibility_duration
+        self.camera.unlock_camera()
+        
+        # Reset platforms and triggers
+        self.platforms = []
+        self.trigger_traps = []
+        self.end_triggers = []
+        
+        # Reuse cached level data
+        if self._cached_normal_data and self._cached_gema_data:
+            normal_data = self._cached_normal_data
+            gema_data = self._cached_gema_data
+            
+            # Setup platforms
+            for p in normal_data['platforms']:
+                self.platforms.append({'rect': p['rect'].copy(), 'dim': 'normal', 'char': p['char']})
+            for p in gema_data['platforms']:
+                self.platforms.append({'rect': p['rect'].copy(), 'dim': 'gema', 'char': p['char']})
+            
+            # Setup trigger traps
+            for trigger_rect, trap_rect in zip(normal_data['triggers'], normal_data['trap_zones']):
+                self.trigger_traps.append(TriggerTrap(trigger_rect.copy(), trap_rect.copy(), dim='normal'))
+            for trigger_rect, trap_rect in zip(gema_data['triggers'], gema_data['trap_zones']):
+                self.trigger_traps.append(TriggerTrap(trigger_rect.copy(), trap_rect.copy(), dim='gema'))
+            
+            # Setup end triggers
+            for et in normal_data['end_triggers']:
+                self.end_triggers.append({'rect': et['rect'].copy(), 'dim': 'normal', 'mode': et['mode']})
+            for et in gema_data['end_triggers']:
+                self.end_triggers.append({'rect': et['rect'].copy(), 'dim': 'gema', 'mode': et['mode']})
+        
+        # Respawn player and enemies
+        self.respawn_player()
+        print("[DEBUG] quick_restart_level completed")
+    
+    def handle_triggers(self):
+        """Handle trigger activation."""
+        player = self.entity_manager.player
+        if not player.is_alive:
             return
-
-        current_dimension_str = 'gema' if self.player.in_gema_dimension else 'normal'
-
-        active_trap_rects = []
-        chaser_that_hit_player = None
-        for t in self.traps:
-            if t['dim'] in [current_dimension_str, 'both']:
-                active_trap_rects.append(t['rect'])
+        
+        current_dim = 'gema' if player.in_gema_dimension else 'normal'
+        
+        # Activate traps
         for trap in self.trigger_traps:
-            if trap.is_active and trap.dim in [current_dimension_str, 'both']:
-                active_trap_rects.append(trap.get_hazard_rect())
-        for enemy in getattr(self, 'enemies', []):
+            trap.try_activate(player.rect, current_dim)
+        
+        # Check end triggers
+        if not self.end_sequence_active:
+            for end_t in self.end_triggers:
+                if end_t['dim'] in [current_dim, 'both'] and player.collides(end_t['rect']):
+                    self.start_end_sequence(end_t['mode'])
+                    break
+    
+    def handle_damage(self):
+        """Handle player damage from hazards."""
+        player = self.entity_manager.player
+        
+        if self.spawn_invincibility_timer > 0 or not player.is_alive or self.is_in_death_delay:
+            return
+        
+        current_dim = 'gema' if player.in_gema_dimension else 'normal'
+        active_hazards = []
+        chaser_that_hit = None
+        
+        # Collect trap hazards
+        for trap in self.trigger_traps:
+            if trap.is_active and trap.dim in [current_dim, 'both']:
+                active_hazards.append(trap.get_hazard_rect())
+        
+        # Collect enemy hazards
+        for enemy in self.entity_manager.enemies:
             if getattr(enemy, 'is_dying', False):
                 continue
+            
             if hasattr(enemy, 'is_hazard_active') and enemy.is_hazard_active():
                 hazard_rect = enemy.get_hazard_rect() if hasattr(enemy, 'get_hazard_rect') else enemy.rect
-                active_trap_rects.append(hazard_rect)
-                # If patrol contacts player, force idle immediately and keep idle permanently
-                if isinstance(enemy, PatrollingEnemy) and hazard_rect.colliderect(self.player.rect):
+                active_hazards.append(hazard_rect)
+                
+                # Handle enemy contact
+                if isinstance(enemy, PatrollingEnemy) and hazard_rect.colliderect(player.rect):
                     if hasattr(enemy, 'on_player_contact') and enemy.is_alive:
                         enemy.on_player_contact()
-                    # stay idle after kill/contact per request
                     setattr(enemy, 'permanent_idle', True)
-                # Track if a chaser actually landed the hazard on the player this frame
-                if isinstance(enemy, ChaserEnemy) and hazard_rect.colliderect(self.player.rect):
-                    chaser_that_hit_player = enemy
+                
+                if isinstance(enemy, ChaserEnemy) and hazard_rect.colliderect(player.rect):
+                    chaser_that_hit = enemy
             
-            # Add boss spell hazards and melee attack
+            # Boss special attacks
             if isinstance(enemy, Boss):
-                for spell_rect in enemy.get_spell_hazards():
-                    active_trap_rects.append(spell_rect)
-                # Add boss melee attack damage
+                active_hazards.extend(enemy.get_spell_hazards())
                 if hasattr(enemy, 'is_melee_active') and enemy.is_melee_active():
-                    melee_rect = enemy.get_melee_hazard_rect()
-                    active_trap_rects.append(melee_rect)
-
-        result = self.player.apply_hazards(active_trap_rects, SCREEN_HEIGHT, is_invincible=False)
+                    active_hazards.append(enemy.get_melee_hazard_rect())
+        
+        # Apply damage
+        result = player.apply_hazards(active_hazards, SCREEN_HEIGHT, is_invincible=False)
         if result:
-            # If a chaser's hazard hit and it caused any form of death (temporary or true),
-            # lock that chaser into permanent combat idle immediately and persist until respawn.
-            if chaser_that_hit_player is not None:
-                setattr(chaser_that_hit_player, 'permanent_combat_idle', True)
-                # Force immediate visual/state change this frame
-                chaser_that_hit_player.state = 'combat_idle'
-                chaser_that_hit_player.frame_index = 0
-                chaser_that_hit_player.animation_finished = False
-                chaser_that_hit_player.velocity.x = 0
+            if chaser_that_hit:
+                setattr(chaser_that_hit, 'permanent_combat_idle', True)
+                chaser_that_hit.state = 'combat_idle'
+                chaser_that_hit.frame_index = 0
+                chaser_that_hit.velocity.x = 0
+            
             if result.get('temporary_death'):
                 self.is_in_death_delay = True
                 self.death_delay_timer = result.get('delay_ms', 500)
                 self.death_delay_start_time = pygame.time.get_ticks()
-
-    def go_to_next_level(self):
-        current_hearts = self.player.hearts
-        self.current_level_index += 1
-        # Save progress when advancing to next level
-        self.save_manager.save_progress(self.current_level_index + 1, current_hearts)
-        if self.current_level_index < len(self.levels):
-            level_pair = self.levels[self.current_level_index]
-            self.setup_level(level_pair[0], level_pair[1], new_game=True)
-            self.player.hearts = current_hearts
-        else:
-            self.game_state = 'game_over_win'
-
-    def check_level_completion(self):
-        pass
-
+    
+    def handle_combat(self):
+        """Handle player attacks on enemies."""
+        player = self.entity_manager.player
+        attack_rect = player.get_attack_hitbox() if hasattr(player, 'get_attack_hitbox') else None
+        
+        if not attack_rect:
+            return
+        
+        for enemy in self.entity_manager.get_active_enemies():
+            if attack_rect.colliderect(enemy.rect):
+                if isinstance(enemy, Boss):
+                    if hasattr(enemy, 'take_damage'):
+                        enemy.take_damage(1)
+                elif hasattr(enemy, 'on_killed_by_player'):
+                    enemy.on_killed_by_player()
+    
+    def handle_enemy_blocking(self):
+        """Handle enemy blocking player movement."""
+        player = self.entity_manager.player
+        
+        for enemy in self.entity_manager.enemies:
+            if getattr(enemy, 'is_dying', False):
+                continue
+            
+            if not getattr(enemy, 'blocks_player', True):
+                continue
+            
+            # Get blocking rect
+            if hasattr(enemy, 'get_invisible_wall_rect'):
+                block_rect = enemy.get_invisible_wall_rect()
+            elif hasattr(enemy, 'get_block_rect'):
+                block_rect = enemy.get_block_rect()
+            else:
+                block_rect = enemy.rect
+            
+            # Check collision and push player
+            if player.rect.colliderect(block_rect):
+                if player.velocity.x > 0:
+                    player.rect.right = block_rect.left
+                elif player.velocity.x < 0:
+                    player.rect.left = block_rect.right
+                else:
+                    if player.rect.centerx < block_rect.centerx:
+                        player.rect.right = block_rect.left
+                    else:
+                        player.rect.left = block_rect.right
+                player.velocity.x = 0
+    
     def start_end_sequence(self, mode: str):
+        """Start level end sequence."""
         self.end_sequence_active = True
-        self.end_sequence_mode = 'jump_walk' if mode == 'jump_walk' else 'walk'
+        self.end_sequence_mode = mode
         self.end_sequence_dir = 1
         self.end_jump_started = False
         self.input_locked = True
-        self.camera_lock_active = True
-        self.camera_lock_center_x = self.player.rect.centerx
-
+        self.camera.lock_camera(self.entity_manager.player.rect.centerx)
     
-
-    def run(self):
-        # Load saved progress to display correct level in main menu background
-        save_data = self.save_manager.load_progress()
-        saved_level_index = save_data.get('current_level', 1) - 1  # Convert to 0-indexed
-        if saved_level_index >= len(self.levels) or saved_level_index < 0:
-            saved_level_index = 0
-        self.current_level_index = saved_level_index
-        level_pair = self.levels[self.current_level_index]
-        self.setup_level(level_pair[0], level_pair[1], new_game=True)
-
-        try:
-            music_path = os.path.join(base_path, '..', 'Assets', 'Sound', 'music_platformer.ogg')
-            pygame.mixer.music.load(music_path)
-            pygame.mixer.music.play(-1) 
-        except pygame.error as e:
-            print(str(AudioLoadError(music_path, e)))
+    def update_end_sequence(self, active_platforms):
+        """Update end sequence animation."""
+        player = self.entity_manager.player
         
-        # Main menu buttons
-        continue_button_rect = pygame.Rect(SCREEN_WIDTH / 2 - 100, SCREEN_HEIGHT / 2 - 40, 200, 50)
-        new_game_button_rect = pygame.Rect(SCREEN_WIDTH / 2 - 100, SCREEN_HEIGHT / 2 + 35, 200, 50)
-        exit_button_rect = pygame.Rect(SCREEN_WIDTH / 2 - 100, SCREEN_HEIGHT / 2 + 110, 200, 50)
+        player.is_walking = True
+        player.direction = 1 if self.end_sequence_dir >= 0 else -1
+        player.velocity.x = PLAYER_SPEED * 0.8 * player.direction
         
-        pause_button_rect = pygame.Rect(SCREEN_WIDTH - 50, 10, 40, 40)
-
-        while self.running:
-            mouse_pos = pygame.mouse.get_pos()
-            self.update_campfires()
-
-            try:
-                events_list = pygame.event.get()
-            except Exception as e:
-                import traceback
-                print("pygame.event.get() failed:", e)
-                traceback.print_exc()
-                try:
-                    pygame.event.clear()
-                except Exception:
-                    pass
-                events_list = []
-
-            for event in events_list:
-                if event.type == pygame.QUIT:
-                    self.running = False
-                if event.type == pygame.KEYDOWN:
-                    if event.key == pygame.K_ESCAPE and self.game_state == 'playing':
-                        self.prev_game_state = self.game_state
-                        self.game_state = 'paused'
-                    elif event.key == pygame.K_p and self.game_state == 'paused':
-                        self.game_state = 'playing'
-                    elif event.key == pygame.K_F3:
-                        self.debug_draw = not self.debug_draw
-
-                if self.game_state == 'playing' and hasattr(self, 'player') and not self.input_locked:
-                    self.player.handle_event(event)
-                
-                # HANYA NPC di dimensi aktif yang menerima input
-                if self.game_state == 'playing' and hasattr(self, 'npcs') and not self.input_locked and not self.end_sequence_active:
-                    current_dim = 'gema' if self.player.in_gema_dimension else 'normal'
-                    for npc in self.npcs:
-                        if getattr(npc, 'dim', 'both') in (current_dim, 'both'):
-                            npc.handle_event(event, getattr(self, 'player').rect if hasattr(self, 'player') else None)
-
-
-                
-                if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                    if self.game_state == 'main_menu':
-                        # Continue button - load saved progress
-                        if continue_button_rect.collidepoint(mouse_pos):
-                            save_data = self.save_manager.load_progress()
-                            self.current_level_index = save_data.get('current_level', 1) - 1  # Convert to 0-indexed
-                            if self.current_level_index >= len(self.levels):
-                                self.current_level_index = 0
-                            level_pair = self.levels[self.current_level_index]
-                            self.setup_level(level_pair[0], level_pair[1], new_game=True)
-                            self.player.hearts = save_data.get('hearts', PLAYER_START_HEARTS)
-                            self.game_state = 'playing'
-                        # New game button - start from level 1
-                        if new_game_button_rect.collidepoint(mouse_pos):
-                            self.current_level_index = 0
-                            level_pair = self.levels[self.current_level_index]
-                            self.setup_level(level_pair[0], level_pair[1], new_game=True)
-                            self.player.hearts = PLAYER_START_HEARTS
-                            self.save_manager.save_progress(1, PLAYER_START_HEARTS)  # Save new game state
-                            self.game_state = 'playing'
-                        if exit_button_rect.collidepoint(mouse_pos):
-                            self.running = False
-                    elif self.game_state == 'playing':
-                        if pause_button_rect.collidepoint(mouse_pos):
-                            self.prev_game_state = self.game_state
-                            self.game_state = 'paused'
-                    elif self.game_state == 'paused':
-                        if self.is_settings_open:
-                            if self.music_button.collidepoint(mouse_pos):
-                                self.is_music_paused = not self.is_music_paused
-                                if self.is_music_paused:
-                                    pygame.mixer.music.pause()
-                                else:
-                                    pygame.mixer.music.unpause()
-                            if self.back_button.collidepoint(mouse_pos):
-                                self.is_settings_open = False
-                        else:
-                            if self.resume_button.collidepoint(mouse_pos):
-                                self.game_state = 'playing'
-                            if self.restart_button.collidepoint(mouse_pos):
-                                self.respawn_player()
-                                self.game_state = 'playing'
-                            if self.settings_button.collidepoint(mouse_pos):
-                                self.is_settings_open = True
-                            if self.main_menu_button.collidepoint(mouse_pos):
-                                # Save current progress before going to main menu
-                                self.save_manager.save_progress(self.current_level_index + 1, self.player.hearts)
-                                # Load saved level for main menu background
-                                save_data = self.save_manager.load_progress()
-                                self.current_level_index = save_data.get('current_level', 1) - 1
-                                if self.current_level_index >= len(self.levels):
-                                    self.current_level_index = 0
-                                level_pair = self.levels[self.current_level_index]
-                                self.setup_level(level_pair[0], level_pair[1], new_game=True)
-                                self.game_state = 'main_menu'
-                    elif self.game_state == 'game_over_win':
-                        if self.restart_button.collidepoint(mouse_pos):
-                            self.current_level_index = 0
-                            level_pair = self.levels[self.current_level_index]
-                            self.setup_level(level_pair[0], level_pair[1], new_game=True)
-                            self.player.hearts = PLAYER_START_HEARTS
-                            self.game_state = 'playing' 
-                        if self.main_menu_button.collidepoint(mouse_pos):
-                            # Load saved level for main menu background
-                            save_data = self.save_manager.load_progress()
-                            self.current_level_index = save_data.get('current_level', 1) - 1
-                            if self.current_level_index >= len(self.levels) or self.current_level_index < 0:
-                                self.current_level_index = 0
-                            level_pair = self.levels[self.current_level_index]
-                            self.setup_level(level_pair[0], level_pair[1], new_game=True)
-                            self.game_state = 'main_menu' 
-                    elif self.game_state == 'game_over':
-                        if self.restart_button.collidepoint(mouse_pos):
-                            self.current_level_index = 0
-                            level_pair = self.levels[self.current_level_index]
-                            self.setup_level(level_pair[0], level_pair[1], new_game=True)
-                            self.player.hearts = PLAYER_START_HEARTS
-                            self.game_state = 'playing'
-                        if self.main_menu_button.collidepoint(mouse_pos):
-                            # Load saved level for main menu background
-                            save_data = self.save_manager.load_progress()
-                            self.current_level_index = save_data.get('current_level', 1) - 1
-                            if self.current_level_index >= len(self.levels) or self.current_level_index < 0:
-                                self.current_level_index = 0
-                            level_pair = self.levels[self.current_level_index]
-                            self.setup_level(level_pair[0], level_pair[1], new_game=True)
-                            self.game_state = 'main_menu'
-
-            if self.game_state == 'playing':
-                if self.spawn_invincibility_timer > 0:
-                    self.spawn_invincibility_timer -= 1
-                
-                current_dimension_str = 'gema' if self.player.in_gema_dimension else 'normal'
-                active_platforms = [p['rect'] for p in self.platforms if p['dim'] in [current_dimension_str, 'both']]
-                
-                if self.end_sequence_active:
-                    self.player.is_walking = True
-                    self.player.direction = 1 if self.end_sequence_dir >= 0 else -1
-                    self.player.velocity.x = PLAYER_SPEED * 0.8 * self.player.direction
-                    if self.end_sequence_mode == 'jump_walk' and not self.end_jump_started and getattr(self.player, 'is_on_ground', False):
-                        self.player.velocity.y = -JUMP_STRENGTH * 0.6
-                        self.end_jump_started = True
-                    self.player.step(active_platforms)
-                else:
-                    self.player.update(active_platforms)
-                for enemy in getattr(self, 'enemies', []):
-                    enemy.update(active_platforms, self.player)
-                
-                # Update NPC sesuai dimensi aktif
-                current_dim = 'gema' if self.player.in_gema_dimension else 'normal'
-                for npc in getattr(self, 'npcs', []):
-                    if getattr(npc, 'dim', 'both') in (current_dim, 'both'):
-                        npc.update(self.player.rect)
-
-                if not self.end_sequence_active:
-                    for enemy in getattr(self, 'enemies', []):
-                        if getattr(enemy, 'is_dying', False):
-                            continue
-                        if getattr(enemy, 'blocks_player', True):
-                            # Use invisible wall for boss, regular block_rect for others
-                            if hasattr(enemy, 'get_invisible_wall_rect'):
-                                block_rect = enemy.get_invisible_wall_rect()
-                            elif hasattr(enemy, 'get_block_rect'):
-                                block_rect = enemy.get_block_rect()
-                            else:
-                                block_rect = enemy.rect
-                                
-                            if self.player.rect.colliderect(block_rect):
-                                if self.player.velocity.x > 0:
-                                    self.player.rect.right = block_rect.left
-                                elif self.player.velocity.x < 0:
-                                    self.player.rect.left = block_rect.right
-                                else:
-                                    if self.player.rect.centerx < block_rect.centerx:
-                                        self.player.rect.right = block_rect.left
-                                    else:
-                                        self.player.rect.left = block_rect.right
-                                self.player.velocity.x = 0
-
-                if not self.end_sequence_active:
-                    attack_rect = self.player.get_attack_hitbox() if hasattr(self.player, 'get_attack_hitbox') else None
-                    if attack_rect:
-                        for enemy in list(getattr(self, 'enemies', [])):
-                            if enemy.is_alive and not getattr(enemy, 'is_dying', False) and attack_rect.colliderect(enemy.rect):
-                                # Boss takes damage instead of instant death
-                                if isinstance(enemy, Boss):
-                                    if hasattr(enemy, 'take_damage'):
-                                        enemy.take_damage(1)
-                                elif hasattr(enemy, 'on_killed_by_player'):
-                                    enemy.on_killed_by_player()
-                
-                if self.player.is_alive:
-                    self.handle_triggers()
-                    if not self.end_sequence_active:
-                        self.handle_damage()
-                else: 
-                    if self.is_in_death_delay:
-                        is_ready_for_delay = (self.player.state == 'death' and self.player.animation_finished) or (self.player.state != 'death')
-                        if is_ready_for_delay:
-                            current_time = pygame.time.get_ticks()
-                            if current_time - self.death_delay_start_time > self.death_delay_timer:
-                                self.respawn_player()
-                    elif self.player.hearts <= 0:
-                        self.game_state = 'game_over'
-                
-                self.update_animated_traps()
-
-                now_ms = pygame.time.get_ticks()
-                self.enemies = [e for e in getattr(self, 'enemies', []) if not (getattr(e, 'is_dying', False) and now_ms >= getattr(e, 'remove_at_ms', 0))]
-                
-            elif self.game_state == 'paused':
-                pass 
-
-            if self.camera_lock_active:
-                camera_offset_x = self.camera_lock_center_x - self.game_surface_width / 2
-            else:
-                camera_offset_x = self.player.rect.centerx - self.game_surface_width / 2
-            if self.camera_right_limit_x is not None:
-                max_offset = self.camera_right_limit_x - self.game_surface_width / 2
-                if camera_offset_x > max_offset:
-                    camera_offset_x = max_offset
-            camera_offset_y = CAMERA_MANUAL_OFFSET_Y
-            final_offset_x = camera_offset_x + CAMERA_MANUAL_OFFSET_X
-            final_offset_y = camera_offset_y
-            
-            self.game_surface.fill(COLOR_BG_GEMA if self.player.in_gema_dimension else COLOR_BG_NORMAL)
-            for layer in reversed(self.parallax_layers):
-                layer.draw(self.game_surface, camera_offset_x, 0)
-            
-            current_dimension_str = 'gema' if self.player.in_gema_dimension else 'normal'
-
-            for layer in reversed(self.parallax_layers):
-                layer.draw(self.game_surface, camera_offset_x, 0)
-
-            if self.player.in_gema_dimension:
-                self.moon_shadow_object.draw(self.game_surface, camera_offset_x)
-                self.moon_object.draw(self.game_surface, camera_offset_x)
-
-            for p in self.platforms:
-                if p['dim'] in [current_dimension_str, 'both']:
-                    tile_image = self.tile_images.get(p.get('char'))
-                    if tile_image:
-                        scaled_image = pygame.transform.scale(tile_image, (p['rect'].width, p['rect'].height))
-                        self.game_surface.blit(scaled_image, (p['rect'].x - final_offset_x, p['rect'].y - final_offset_y))
-
-            for trap in self.trigger_traps:
-                if trap.is_active and trap.dim in [current_dimension_str, 'both']:
-                    trap.draw(self.game_surface, final_offset_x, final_offset_y, self.spike_frames)
-
-            self.draw_campfires(final_offset_x, final_offset_y)
-
-            for enemy in getattr(self, 'enemies', []):
-                enemy.draw(self.game_surface, final_offset_x, final_offset_y)
-            
-            # Draw boss spells (above enemies, below player)
-            for enemy in getattr(self, 'enemies', []):
-                if isinstance(enemy, Boss):
-                    enemy.draw_spells(self.game_surface, final_offset_x, final_offset_y)
-
-            # --- DEBUG DRAW ---
-            if self.debug_draw:
-                # Player hitbox
-                pygame.draw.rect(
-                    self.game_surface, (0, 255, 0),
-                    pygame.Rect(
-                        self.player.rect.x - final_offset_x,
-                        self.player.rect.y - final_offset_y,
-                        self.player.rect.width,
-                        self.player.rect.height
-                    ), 1
-                )
-
-                # Player attack box
-                if hasattr(self.player, "get_attack_hitbox"):
-                    atk_rect = self.player.get_attack_hitbox()
-                    if atk_rect:
-                        pygame.draw.rect(
-                            self.game_surface, (255, 165, 0),
-                            pygame.Rect(
-                                atk_rect.x - final_offset_x,
-                                atk_rect.y - final_offset_y,
-                                atk_rect.width,
-                                atk_rect.height
-                            ), 1
-                        )
-
-                # Enemy hitboxes
-                for enemy in getattr(self, "enemies", []):
-                    pygame.draw.rect(
-                        self.game_surface, (180, 180, 180),
-                        pygame.Rect(
-                            enemy.rect.x - final_offset_x,
-                            enemy.rect.y - final_offset_y,
-                            enemy.rect.width,
-                            enemy.rect.height
-                        ), 1
-                    )
-
-                    if hasattr(enemy, "get_block_rect"):
-                        br = enemy.get_block_rect()
-                        pygame.draw.rect(
-                            self.game_surface, (0, 200, 255),
-                            pygame.Rect(
-                                br.x - final_offset_x,
-                                br.y - final_offset_y,
-                                br.width,
-                                br.height
-                            ), 1
-                        )
-
-                    if hasattr(enemy, "is_hazard_active") and enemy.is_hazard_active():
-                        hz = enemy.get_hazard_rect() if hasattr(enemy, "get_hazard_rect") else enemy.rect
-                        pygame.draw.rect(
-                            self.game_surface, (255, 0, 0),
-                            pygame.Rect(
-                                hz.x - final_offset_x,
-                                hz.y - final_offset_y,
-                                hz.width,
-                                hz.height
-                            ), 1
-                        )
-
-                # --- NPC hitboxes (filter sesuai dimensi aktif) ---
-                current_dim = "gema" if self.player.in_gema_dimension else "normal"
-                for npc in getattr(self, "npcs", []):
-                    if getattr(npc, "dim", "both") in (current_dim, "both"):
-                        pygame.draw.rect(
-                            self.game_surface, (0, 255, 255),
-                            pygame.Rect(
-                                npc.rect.x - final_offset_x,
-                                npc.rect.y - final_offset_y,
-                                npc.rect.width,
-                                npc.rect.height
-                            ), 1
-                        )
-
-            # --- DRAW NPC sesuai dimensi aktif ---
-            current_dim = "gema" if self.player.in_gema_dimension else "normal"
-            for npc in getattr(self, "npcs", []):
-                if getattr(npc, "dim", "both") in (current_dim, "both"):
-                    npc.draw(self.game_surface, final_offset_x, final_offset_y)
-
-            # --- DRAW PLAYER ---
-            self.player.draw(self.game_surface, final_offset_x, final_offset_y)
-
-            # --- BLIT KE LAYAR ---
-            self.screen.blit(
-                pygame.transform.scale(self.game_surface, self.screen.get_size()), (0, 0)
-            )
-
-            self.player.draw(self.game_surface, final_offset_x, final_offset_y)
-            
-            self.screen.blit(pygame.transform.scale(self.game_surface, self.screen.get_size()), (0, 0))
-
-            if self.game_state == 'playing' and self.end_sequence_active:
-                player_screen_x = self.player.rect.x - final_offset_x
-                if player_screen_x > self.game_surface_width + 40 or player_screen_x + self.player.rect.width < -40 or self.player.rect.left > self.level_width_pixels + 40:
-                    self.end_sequence_active = False
-                    self.input_locked = False
-                    self.camera_lock_active = False
-                    self.go_to_next_level()
-
-            if self.game_state == 'playing' or self.game_state == 'paused':
-                for i in range(self.player.hearts):
-                    self.screen.blit(self.heart_icon, (10 + i * 35, 10))
-                
-                pygame.draw.circle(self.screen, (100, 100, 100), pause_button_rect.center, 20)
-                if pause_button_rect.collidepoint(mouse_pos):
-                    pygame.draw.circle(self.screen, (150, 150, 150), pause_button_rect.center, 20)
-                
-                UI.draw_text(self, "||", 32, (255, 255, 255), pause_button_rect.centerx, pause_button_rect.centery, shadow_color=None)
-            
-            if self.game_state == 'main_menu':
-                UI.draw_text(self, "Dual Dimension", 80, (255, 255, 255), SCREEN_WIDTH / 2, SCREEN_HEIGHT / 4, shadow_color=(20, 20, 20))
-                
-                # Continue button
-                continue_color = (150, 150, 150) if continue_button_rect.collidepoint(mouse_pos) else (100, 100, 100)
-                pygame.draw.rect(self.screen, continue_color, continue_button_rect, border_radius=10)
-                UI.draw_text(self, "Lanjutkan", 32, (255, 255, 255), continue_button_rect.centerx, continue_button_rect.centery)
-                
-                # New game button
-                new_game_color = (150, 150, 150) if new_game_button_rect.collidepoint(mouse_pos) else (100, 100, 100)
-                pygame.draw.rect(self.screen, new_game_color, new_game_button_rect, border_radius=10)
-                UI.draw_text(self, "Mulai Baru", 32, (255, 255, 255), new_game_button_rect.centerx, new_game_button_rect.centery)
-                
-                # Exit button
-                exit_color = (150, 150, 150) if exit_button_rect.collidepoint(mouse_pos) else (100, 100, 100)
-                pygame.draw.rect(self.screen, exit_color, exit_button_rect, border_radius=10)
-                UI.draw_text(self, "Keluar", 32, (255, 255, 255), exit_button_rect.centerx, exit_button_rect.centery)
-
-            elif self.game_state == 'paused':
-                if self.is_settings_open:
-                    UI.draw_settings_menu(self)
-                else:
-                    UI.draw_pause_menu(self)
-
-            elif self.game_state == 'game_over_win':
-                UI.draw_win_screen(self)
-            elif self.game_state == 'game_over':
-                UI.draw_game_over_screen(self)
-            
-            pygame.display.flip()
-            self.clock.tick(FPS)
-            
-    def ground_y_at(self, x, dim='normal'):
-        tops = [
-            p['rect'].top
-            for p in self.platforms
-            if p['dim'] in [dim, 'both'] and p['rect'].left <= x <= p['rect'].right
-        ]
-        return min(tops) if tops else SCREEN_HEIGHT  # fallback kalau tidak ada platform
+        if self.end_sequence_mode == 'jump_walk' and not self.end_jump_started:
+            if getattr(player, 'is_on_ground', False):
+                player.velocity.y = -JUMP_STRENGTH * 0.6
+                self.end_jump_started = True
+        
+        player.step(active_platforms)
+        
+        # Check if sequence complete
+        camera_offset = self.camera.get_offset(player.rect)
+        player_screen_x = player.rect.x - camera_offset[0]
+        
+        if (player_screen_x > self.game_surface_width + 40 or 
+            player_screen_x + player.rect.width < -40 or 
+            player.rect.left > self.level_width_pixels + 40):
+            self.end_sequence_active = False
+            self.input_locked = False
+            self.camera.unlock_camera()
+            self.go_to_next_level()
     
-    def ground_rect_at_or_near(self, x, dim='normal', max_dx=160):
-    # kandidat tepat di bawah x
-        exact = [p['rect'] for p in self.platforms
-                if p['dim'] in [dim, 'both'] and p['rect'].left <= x <= p['rect'].right]
-        if exact:
-            # pilih yang top paling kecil (paling atas)
-            return min(exact, key=lambda r: r.top)
-
-        # kalau kosong, cari platform terdekat secara horizontal
-        near = [(abs(x - r.centerx), r) for r in
-                (p['rect'] for p in self.platforms if p['dim'] in [dim, 'both'])]
-        near = [t for t in near if t[0] <= max_dx]
-        if near:
-            return min(near, key=lambda t: (t[0], t[1].top))[1]
-
-        return None  # benar-benar tidak ada lantai
-
+    def go_to_next_level(self):
+        """Advance to next level."""
+        current_hearts = self.entity_manager.player.hearts
+        
+        if self.level_controller.advance_level():
+            # Save progress
+            self.save_manager.save_progress(self.level_controller.current_level, current_hearts)
+            self.setup_level(new_game=True)
+            self.entity_manager.player.hearts = current_hearts
+        else:
+            # All levels completed
+            self.state_controller.change_state(GameStateEnum.GAME_OVER_WIN)
+    
+    def update(self):
+        """Main update loop."""
+        player = self.entity_manager.player
+        
+        # Update invincibility
+        if self.spawn_invincibility_timer > 0:
+            self.spawn_invincibility_timer -= 1
+        
+        # Get active platforms for current dimension
+        current_dim = 'gema' if player.in_gema_dimension else 'normal'
+        active_platforms = [p['rect'] for p in self.platforms if p['dim'] in [current_dim, 'both']]
+        
+        # Update based on game state
+        if self.end_sequence_active:
+            self.update_end_sequence(active_platforms)
+        else:
+            # Normal gameplay
+            player.update(active_platforms)
+            
+            # Update all entities
+            for enemy in self.entity_manager.enemies:
+                enemy.update(active_platforms, player)
+            
+            # Update NPCs
+            for npc in self.entity_manager.npcs:
+                if getattr(npc, 'dim', 'both') in (current_dim, 'both'):
+                    npc.update(player.rect)
+            
+            # Handle interactions
+            if player.is_alive:
+                self.handle_triggers()
+                self.handle_damage()
+                self.handle_enemy_blocking()
+                self.handle_combat()
+        
+        # Update animated elements
+        for trap in self.trigger_traps:
+            trap.update(self.asset_loader.spike_frames)
+        
+        for campfire in self.entity_manager.campfires:
+            campfire.update(self.asset_loader.campfire_frames)
+        
+        # Handle death
+        if not player.is_alive:
+            if self.is_in_death_delay:
+                is_ready = (player.state == 'death' and player.animation_finished) or (player.state != 'death')
+                if is_ready:
+                    current_time = pygame.time.get_ticks()
+                    if current_time - self.death_delay_start_time > self.death_delay_timer:
+                        self.respawn_player()
+            elif player.hearts <= 0:
+                self.state_controller.change_state(GameStateEnum.GAME_OVER)
+        
+        # Cleanup dead enemies
+        self.entity_manager.cleanup_dead_enemies()
+    
+    def draw(self):
+        """Main draw loop."""
+        player = self.entity_manager.player
+        
+        # Get camera offset
+        camera_offset = self.camera.get_offset(player.rect)
+        
+        # Clear screen
+        current_dim = 'gema' if player.in_gema_dimension else 'normal'
+        bg_color = COLOR_BG_GEMA if current_dim == 'gema' else COLOR_BG_NORMAL
+        self.game_surface.fill(bg_color)
+        
+        # Draw parallax
+        for layer in reversed(self.parallax_layers):
+            layer.draw(self.game_surface, camera_offset[0], 0)
+        
+        if current_dim == 'gema':
+            self.moon_shadow_object.draw(self.game_surface, camera_offset[0])
+            self.moon_object.draw(self.game_surface, camera_offset[0])
+        
+        # Draw platforms
+        for p in self.platforms:
+            if p['dim'] in [current_dim, 'both']:
+                tile_image = self.asset_loader.tile_images.get(p['char'])
+                if tile_image:
+                    scaled_image = pygame.transform.scale(tile_image, (p['rect'].width, p['rect'].height))
+                    self.game_surface.blit(scaled_image, (p['rect'].x - camera_offset[0], p['rect'].y - camera_offset[1]))
+        
+        # Draw traps
+        for trap in self.trigger_traps:
+            if trap.is_active and trap.dim in [current_dim, 'both']:
+                trap.draw(self.game_surface, camera_offset[0], camera_offset[1], self.asset_loader.spike_frames)
+        
+        # Draw campfires
+        for campfire in self.entity_manager.campfires:
+            campfire.draw(self.game_surface, camera_offset[0], camera_offset[1], self.asset_loader.campfire_frames)
+        
+        # Draw entities
+        self.entity_manager.draw_all(self.game_surface, camera_offset[0], camera_offset[1])
+        
+        # Debug draw
+        if self.debug_draw:
+            self._draw_debug(camera_offset, current_dim)
+        
+        # Scale to screen
+        self.screen.blit(pygame.transform.scale(self.game_surface, self.screen.get_size()), (0, 0))
+    
+    def _draw_debug(self, camera_offset, current_dim):
+        """Draw debug hitboxes."""
+        player = self.entity_manager.player
+        
+        # Player hitbox
+        pygame.draw.rect(self.game_surface, (0, 255, 0),
+            pygame.Rect(player.rect.x - camera_offset[0], player.rect.y - camera_offset[1],
+                       player.rect.width, player.rect.height), 1)
+        
+        # Attack hitbox
+        if hasattr(player, "get_attack_hitbox"):
+            atk_rect = player.get_attack_hitbox()
+            if atk_rect:
+                pygame.draw.rect(self.game_surface, (255, 165, 0),
+                    pygame.Rect(atk_rect.x - camera_offset[0], atk_rect.y - camera_offset[1],
+                               atk_rect.width, atk_rect.height), 1)
+        
+        # Enemy hitboxes
+        for enemy in self.entity_manager.enemies:
+            pygame.draw.rect(self.game_surface, (180, 180, 180),
+                pygame.Rect(enemy.rect.x - camera_offset[0], enemy.rect.y - camera_offset[1],
+                           enemy.rect.width, enemy.rect.height), 1)
+        
+        # NPC hitboxes
+        for npc in self.entity_manager.npcs:
+            if getattr(npc, "dim", "both") in (current_dim, "both"):
+                pygame.draw.rect(self.game_surface, (0, 255, 255),
+                    pygame.Rect(npc.rect.x - camera_offset[0], npc.rect.y - camera_offset[1],
+                               npc.rect.width, npc.rect.height), 1)
+    
     def snap_actor_to_ground(self, actor_rect, dim='normal', max_dx=160):
+        """Snap actor to nearest ground platform."""
         r = self.ground_rect_at_or_near(actor_rect.centerx, dim, max_dx)
         if r:
-            # jaga x tetap di atas platform
             actor_rect.bottom = r.top
             actor_rect.centerx = max(r.left + actor_rect.width//2,
                                     min(r.right - actor_rect.width//2, actor_rect.centerx))
             return True
         return False
-
+    
+    def ground_rect_at_or_near(self, x, dim='normal', max_dx=160):
+        """Find ground rect at or near x position."""
+        exact = [p['rect'] for p in self.platforms
+                if p['dim'] in [dim, 'both'] and p['rect'].left <= x <= p['rect'].right]
+        if exact:
+            return min(exact, key=lambda r: r.top)
+        
+        near = [(abs(x - r.centerx), r) for r in
+                (p['rect'] for p in self.platforms if p['dim'] in [dim, 'both'])]
+        near = [t for t in near if t[0] <= max_dx]
+        if near:
+            return min(near, key=lambda t: (t[0], t[1].top))[1]
+        
+        return None
+    
+    def run(self):
+        """Main game loop."""
+        # Load saved progress
+        save_data = self.save_manager.load_progress()
+        self.level_controller.set_level(save_data.get('current_level', 1))
+        self.setup_level(new_game=True)
+        
+        # UI buttons
+        from graphics.ui_buttons import UIButtons
+        ui_buttons = UIButtons()
+        
+        while self.running:
+            mouse_pos = pygame.mouse.get_pos()
+            
+            # Event handling
+            try:
+                events_list = pygame.event.get()
+            except Exception:
+                pygame.event.clear()
+                events_list = []
+            
+            for event in events_list:
+                if event.type == pygame.QUIT:
+                    self.running = False
+                
+                if event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_ESCAPE:
+                        if self.state_controller.is_state(GameStateEnum.PLAYING):
+                            self.state_controller.toggle_pause()
+                    elif event.key == pygame.K_p:
+                        if self.state_controller.is_state(GameStateEnum.PAUSED):
+                            self.state_controller.toggle_pause()
+                    elif event.key == pygame.K_F3:
+                        self.debug_draw = not self.debug_draw
+                
+                # Player input
+                if self.state_controller.is_state(GameStateEnum.PLAYING) and not self.input_locked:
+                    if self.entity_manager.player:
+                        self.entity_manager.player.handle_event(event)
+                    
+                    # NPC input
+                    player = self.entity_manager.player
+                    current_dim = 'gema' if player.in_gema_dimension else 'normal'
+                    for npc in self.entity_manager.npcs:
+                        if getattr(npc, 'dim', 'both') in (current_dim, 'both'):
+                            npc.handle_event(event, player.rect)
+                
+                # UI input
+                if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                    ui_buttons.handle_click(self, mouse_pos)
+            
+            # Update
+            if self.state_controller.is_state(GameStateEnum.PLAYING):
+                self.update()
+            
+            # Draw
+            self.draw()
+            
+            # Draw UI
+            ui_buttons.draw_ui(self, mouse_pos)
+            
+            pygame.display.flip()
+            self.clock.tick(FPS)
+        
         pygame.quit()
+
 
 if __name__ == '__main__':
     game = Game()
     game.run()
-
-

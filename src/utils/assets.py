@@ -1,5 +1,5 @@
 import pygame
-from settings import *
+from .settings import *
 
 # def create_platform_surface(width, height, dimension):
 #     color = COLOR_PLATFORM_NORMAL if dimension == 'normal' else COLOR_PLATFORM_GEMA

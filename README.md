@@ -75,12 +75,37 @@ Ketika game di-pause, akan ada empat tombol:
 
 **Jebakan utamanya berupa duri yang hanya akan mengurangi nyawa pemain**.
 
-## **5. Sistem Progres**
+## **5. Sistem Progress**
 
 **Progres pemain didorong oleh keberhasilan melewati rintangan**.
 
 * **Progres Berbasis Level** adalah **Kemajuan pemain ditandai dengan level yang berhasil dicapai**.
 * **Penyelesaian Level** adalah **Menyelesaikan sebuah level akan memberikan akses ke level berikutnya, yang berisi jebakan dan teka-teki yang lebih kompleks**.
+
+## 6. Struktur Kode
+
+```
+src/
+├── core/                    # Core interfaces dan base classes
+│   ├── __init__.py
+│   ├── interfaces.py       # Abstract interfaces (IDrawable, IUpdatable, dll)
+│   └── entity_base.py      # Base Entity class
+├── managers/               # High-level managers
+│   ├── __init__.py
+│   ├── resource_manager.py # Asset loading dan caching (Singleton)
+│   ├── state_manager.py    # Game state management
+│   └── level_manager.py    # Level loading dan progression
+├── systems/                # Game systems (Composition)
+│   ├── __init__.py
+│   ├── camera_system.py    # Camera dan viewport
+│   ├── collision_system.py # Collision detection
+│   ├── input_system.py     # Input handling
+│   └── render_system.py    # Rendering layers
+├── entity/                 # Game entities (Player, Enemy, NPC)
+├── environment/            # Environment objects (Traps, Campfire)
+└── main.py                # Game orchestrator
+```
+
 
 ## Referensi Asset
 

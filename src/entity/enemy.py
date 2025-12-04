@@ -2,7 +2,7 @@ import os
 import pygame
 from typing import Optional
 from entity.entity import Entity
-from exception import AssetLoadError
+from utils.exception import AssetLoadError
 
 
 class Enemy(Entity):

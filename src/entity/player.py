@@ -1,8 +1,8 @@
 import os
 import pygame
-from settings import *
+from utils.settings import *
 from entity.entity import Entity
-from exception import AssetLoadError, SpriteSheetError
+from utils.exception import AssetLoadError, SpriteSheetError
 
 base_path = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.abspath(os.path.join(base_path, '..', '..'))

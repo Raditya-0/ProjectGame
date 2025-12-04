@@ -6,10 +6,15 @@ class SaveManager:
     """Manages player save data."""
     
     def __init__(self, save_file: str = "player_save.json"):
-        # Save file in the project root directory
+        # Save file in the saves directory
         base_path = os.path.dirname(os.path.abspath(__file__))
-        project_root = os.path.abspath(os.path.join(base_path, '..'))
-        self.save_path = os.path.join(project_root, save_file)
+        project_root = os.path.abspath(os.path.join(base_path, '..', '..'))
+        saves_dir = os.path.join(project_root, 'saves')
+        
+        # Create saves directory if it doesn't exist
+        os.makedirs(saves_dir, exist_ok=True)
+        
+        self.save_path = os.path.join(saves_dir, save_file)
         
     def save_progress(self, current_level: int, hearts: int = 3):
         """Save current player progress."""
