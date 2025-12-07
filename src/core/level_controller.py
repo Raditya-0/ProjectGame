@@ -191,3 +191,55 @@ class LevelController:
         # Camera limit
         elif char == 'K':
             level_data['camera_right_limit'] = world_x + self.tile_size // 2
+    
+    # Platform utility methods
+    def ground_rect_at_or_near(self, platforms: list, x: float, dim: str = 'normal', max_dx: int = 160):
+        """
+        Find ground rect at or near x position.
+        
+        Args:
+            platforms: List of platform dicts with 'rect' and 'dim' keys
+            x: X position to search near
+            dim: Dimension to filter by ('normal', 'gema', 'both')
+            max_dx: Maximum distance to search
+        
+        Returns:
+            pygame.Rect or None
+        """
+        # Find exact matches (x is within platform bounds)
+        exact = [p['rect'] for p in platforms
+                if p['dim'] in [dim, 'both'] and p['rect'].left <= x <= p['rect'].right]
+        if exact:
+            return min(exact, key=lambda r: r.top)
+        
+        # Find nearby platforms
+        near = [(abs(x - r.centerx), r) for r in
+                (p['rect'] for p in platforms if p['dim'] in [dim, 'both'])]
+        near = [t for t in near if t[0] <= max_dx]
+        if near:
+            return min(near, key=lambda t: (t[0], t[1].top))[1]
+        
+        return None
+    
+    def snap_actor_to_ground(self, platforms: list, actor_rect, dim: str = 'normal', max_dx: int = 160) -> bool:
+        """
+        Snap actor rect to nearest ground platform.
+        
+        Args:
+            platforms: List of platform dicts with 'rect' and 'dim' keys
+            actor_rect: pygame.Rect to snap (modified in place)
+            dim: Dimension to filter by
+            max_dx: Maximum horizontal distance to search
+        
+        Returns:
+            True if snapped, False if no ground found
+        """
+        ground = self.ground_rect_at_or_near(platforms, actor_rect.centerx, dim, max_dx)
+        if ground:
+            actor_rect.bottom = ground.top
+            actor_rect.centerx = max(
+                ground.left + actor_rect.width // 2,
+                min(ground.right - actor_rect.width // 2, actor_rect.centerx)
+            )
+            return True
+        return False
