@@ -2,7 +2,7 @@ import os
 import pygame
 from typing import Optional
 from entity.entity import Entity
-from exception import AssetLoadError
+from utils.exception import AssetLoadError
 
 
 class Enemy(Entity):
@@ -314,10 +314,18 @@ class ChaserEnemy(Enemy):
             return
 
         now = pygame.time.get_ticks()
+        
+        # Check if in permanent combat idle (after killing player)
+        if getattr(self, 'permanent_combat_idle', False):
+            self.velocity.x = 0
+            self.state = 'combat_idle'
+            self.step(platforms)
+            return
 
         if player:
             contact_rect = self.get_block_rect()
-            if contact_rect.colliderect(player.rect) and self.state != 'attack':
+            # Only start new attack if not already attacking or in combat_idle cooldown
+            if contact_rect.colliderect(player.rect) and self.state not in ('attack', 'combat_idle'):
                 self.alerted = True
                 self.direction = 1 if (player.rect.centerx >= self.rect.centerx) else -1
                 self.state = 'attack'

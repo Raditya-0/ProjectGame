@@ -1,6 +1,6 @@
 import os
 import pygame
-from exception import AssetLoadError
+from utils.exception import AssetLoadError
 
 
 def load_campfire_frames(assets_path: str) -> list[pygame.Surface]:
