@@ -2,6 +2,8 @@
 
 > Platform 2D dengan mekanik perpindahan dimensi untuk bertahan hidup dari jebakan mematikan.
 
+![1766021761804](image/README/1766021761804.png)
+
 ---
 
 ## Deskripsi
@@ -69,16 +71,16 @@ Tekan **ESC** untuk pause, dengan opsi:
 
 ### Gerakan Dasar
 
-| Tombol               | Aksi                 |
-| -------------------- | -------------------- |
-| **A / ←**            | Gerak ke kiri        |
-| **D / →**            | Gerak ke kanan       |
-| **Space / ↑**        | Lompat               |
-| **Klik Touchpad**    | Serangan             |
-| **Shift**            | Berpindah dimensi    |
-| **E**                | Interaksi dengan NPC |
-| **ESC**              | Pause game           |
-| **F3**               | Toggle debug mode    |
+| Tombol                  | Aksi                 |
+| ----------------------- | -------------------- |
+| **A / ←**        | Gerak ke kiri        |
+| **D / →**        | Gerak ke kanan       |
+| **Space / ↑**    | Lompat               |
+| **Klik Touchpad** | Serangan             |
+| **Shift**         | Berpindah dimensi    |
+| **E**             | Interaksi dengan NPC |
+| **ESC**           | Pause game           |
+| **F3**            | Toggle debug mode    |
 
 ### Sistem Dimensi
 
@@ -203,11 +205,11 @@ Data dan method dikapsulasi dalam class dengan access modifier:
 class SaveManager:
     def __init__(self):
         self._save_file = "saves/player_save.json"  # Private attribute
-        
+      
     def save_progress(self, level, hearts):
         # Public method
         self._write_to_file(data)  # Private method
-    
+  
     def _write_to_file(self, data):
         # Private helper method
         with open(self._save_file, 'w') as f:
@@ -226,7 +228,7 @@ class Entity:
     def __init__(self, x, y, image):
         self.rect = pygame.Rect(x, y, width, height)
         self.is_alive = True
-    
+  
     def update(self, platforms):
         pass  # To be overridden
 
@@ -243,6 +245,7 @@ class Enemy(Entity):
 ```
 
 **Hierarchy**:
+
 - `Entity` → `Player`, `Enemy`, `Boss`, `NPC`
 - `Enemy` → `PatrollingEnemy`, `ChaserEnemy`
 
@@ -320,7 +323,7 @@ class Player(Entity, IDrawable, IUpdatable):
     def draw(self, screen, offset_x, offset_y):
         # Concrete implementation
         pass
-    
+  
     def update(self, platforms):
         # Concrete implementation
         pass
