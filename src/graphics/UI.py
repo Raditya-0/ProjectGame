@@ -110,3 +110,75 @@ def draw_game_over_screen(game):
         color = (150, 150, 150) if rect.collidepoint(mouse_pos) else (100, 100, 100)
         pygame.draw.rect(game.screen, color, rect, border_radius=10)
         draw_text(game, text, 32, (255, 255, 255), rect.centerx, rect.centery)
+
+
+def draw_main_menu_new(game, asset_loader, mouse_pos, prev_mouse_pressed):
+    """
+    Draw Main Menu menggunakan aset gambar dengan desain baru.
+    Mengembalikan aksi jika tombol ditekan.
+    """
+    screen = game.screen
+    sw, sh = screen.get_width(), screen.get_height()
+
+    # Background
+    screen.fill((0, 0, 0))
+    bg = asset_loader.menu_assets['background']
+    bg_scaled = pygame.transform.scale(bg, (sw, sh))
+    screen.blit(bg_scaled, (0, 0))
+
+    # Button config
+    BASE_SCALE = 0.65
+    HOVER_SCALE = 0.70
+    CLICK_SCALE = 0.60
+
+    def scale(img, factor):
+        w, h = img.get_size()
+        return pygame.transform.scale(img, (int(w * factor), int(h * factor)))
+
+    mouse_pressed = pygame.mouse.get_pressed()[0]
+    
+    # Detect click only on button press (not hold)
+    mouse_clicked = mouse_pressed and not prev_mouse_pressed
+    
+    # Store for next frame
+    game.prev_mouse_pressed = mouse_pressed
+
+    def draw_button(img, center):
+        base_img = scale(img, BASE_SCALE)
+        rect = base_img.get_rect(center=center)
+        hovered = rect.collidepoint(mouse_pos)
+
+        if hovered and mouse_pressed:
+            img_draw = scale(img, CLICK_SCALE)
+        elif hovered:
+            img_draw = scale(img, HOVER_SCALE)
+        else:
+            img_draw = base_img
+
+        rect = img_draw.get_rect(center=center)
+        screen.blit(img_draw, rect)
+
+        # Click only valid on fresh press (not hold)
+        clicked = hovered and mouse_clicked
+        return rect, clicked
+
+    # Layout
+    cx = sw // 2
+    start_y = sh // 2 - 20
+    base_btn = scale(asset_loader.menu_assets['btn_lanjutkan'], BASE_SCALE)
+    spacing = base_btn.get_height() + 18
+
+    # Draw buttons
+    _, click_lanjutkan = draw_button(asset_loader.menu_assets['btn_lanjutkan'], (cx, start_y))
+    _, click_mulai = draw_button(asset_loader.menu_assets['btn_mulai_baru'], (cx, start_y + spacing))
+    _, click_keluar = draw_button(asset_loader.menu_assets['btn_keluar'], (cx, start_y + spacing * 2))
+
+    # Return action
+    if click_lanjutkan:
+        return "CONTINUE"
+    if click_mulai:
+        return "NEW_GAME"
+    if click_keluar:
+        return "EXIT"
+
+    return None

@@ -48,26 +48,9 @@ class UIButtons:
             self._handle_game_over_click(game, mouse_pos)
     
     def _handle_main_menu_click(self, game, mouse_pos):
-        """Handle main menu button clicks."""
-        # Continue button
-        if self.continue_button.collidepoint(mouse_pos):
-            save_data = game.save_manager.load_progress()
-            game.level_controller.set_level(save_data.get('current_level', 1))
-            game.setup_level(new_game=True)
-            game.entity_manager.player.hearts = save_data.get('hearts', PLAYER_START_HEARTS)
-            game.state_controller.change_state(GameStateEnum.PLAYING)
-        
-        # New game button
-        elif self.new_game_button.collidepoint(mouse_pos):
-            game.level_controller.reset_to_first_level()
-            game.setup_level(new_game=True)
-            game.entity_manager.player.hearts = PLAYER_START_HEARTS
-            game.save_manager.save_progress(1, PLAYER_START_HEARTS)
-            game.state_controller.change_state(GameStateEnum.PLAYING)
-        
-        # Exit button
-        elif self.exit_button.collidepoint(mouse_pos):
-            game.running = False
+        """Handle main menu button clicks - now uses new menu system."""
+        # New menu system handles clicks internally via draw function
+        pass
     
     def _handle_playing_click(self, game, mouse_pos):
         """Handle playing state button clicks."""
@@ -200,26 +183,35 @@ class UIButtons:
             UI.draw_game_over_screen(game)
     
     def _draw_main_menu(self, game, mouse_pos):
-        """Draw main menu."""
+        """Draw main menu with new design."""
         from graphics import UI
         
-        UI.draw_text(game, "Dual Dimension", 80, (255, 255, 255), 
-                    SCREEN_WIDTH / 2, SCREEN_HEIGHT / 4, shadow_color=(20, 20, 20))
+        # Initialize prev_mouse_pressed if not exists
+        if not hasattr(game, 'prev_mouse_pressed'):
+            game.prev_mouse_pressed = False
         
-        # Continue button
-        continue_color = (150, 150, 150) if self.continue_button.collidepoint(mouse_pos) else (100, 100, 100)
-        pygame.draw.rect(game.screen, continue_color, self.continue_button, border_radius=10)
-        UI.draw_text(game, "Lanjutkan", 32, (255, 255, 255), 
-                    self.continue_button.centerx, self.continue_button.centery)
+        # Draw new menu and get action
+        action = UI.draw_main_menu_new(
+            game, 
+            game.asset_loader, 
+            mouse_pos, 
+            game.prev_mouse_pressed
+        )
         
-        # New game button
-        new_game_color = (150, 150, 150) if self.new_game_button.collidepoint(mouse_pos) else (100, 100, 100)
-        pygame.draw.rect(game.screen, new_game_color, self.new_game_button, border_radius=10)
-        UI.draw_text(game, "Mulai Baru", 32, (255, 255, 255), 
-                    self.new_game_button.centerx, self.new_game_button.centery)
+        # Handle menu actions
+        if action == "CONTINUE":
+            save_data = game.save_manager.load_progress()
+            game.level_controller.set_level(save_data.get('current_level', 1))
+            game.setup_level(new_game=True)
+            game.entity_manager.player.hearts = save_data.get('hearts', PLAYER_START_HEARTS)
+            game.state_controller.change_state(GameStateEnum.PLAYING)
         
-        # Exit button
-        exit_color = (150, 150, 150) if self.exit_button.collidepoint(mouse_pos) else (100, 100, 100)
-        pygame.draw.rect(game.screen, exit_color, self.exit_button, border_radius=10)
-        UI.draw_text(game, "Keluar", 32, (255, 255, 255), 
-                    self.exit_button.centerx, self.exit_button.centery)
+        elif action == "NEW_GAME":
+            game.level_controller.reset_to_first_level()
+            game.setup_level(new_game=True)
+            game.entity_manager.player.hearts = PLAYER_START_HEARTS
+            game.save_manager.save_progress(1, PLAYER_START_HEARTS)
+            game.state_controller.change_state(GameStateEnum.PLAYING)
+        
+        elif action == "EXIT":
+            game.running = False

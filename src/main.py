@@ -202,17 +202,24 @@ class Game:
             self.go_to_next_level()
     
     def go_to_next_level(self):
-        """Advance to next level."""
+        """Advance to next level (SAFE for demo)."""
         current_hearts = self.entity_manager.player.hearts
-        
-        if self.level_controller.advance_level():
-            # Save progress
-            self.save_manager.save_progress(self.level_controller.current_level, current_hearts)
+
+        # Gunakan advance_level() method dari LevelController
+        has_next_level = self.level_controller.advance_level()
+
+        # Jika masih ada level berikutnya
+        if has_next_level:
+            self.save_manager.save_progress(
+                self.level_controller.current_level,
+                current_hearts
+            )
             self.setup_level(new_game=True)
             self.entity_manager.player.hearts = current_hearts
         else:
-            # All levels completed
+            # Semua level selesai → WIN SCREEN
             self.state_controller.change_state(GameStateEnum.GAME_OVER_WIN)
+
     
     def update(self):
         """Main update loop."""
@@ -246,7 +253,7 @@ class Game:
                 # Check triggers
                 end_mode = self.gameplay.handle_triggers(player, self.trigger_traps, self.end_triggers)
                 if end_mode:
-                    self.gameplay.start_end_sequence(end_mode, player, self.camera)
+                    self.gameplay.start_end_sequence(end_mode)
                     self.input_locked = True
                 
                 # Handle damage and combat

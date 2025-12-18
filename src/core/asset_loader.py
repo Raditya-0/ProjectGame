@@ -25,6 +25,9 @@ class AssetLoader:
         self.moon_shadow_image: Optional[pygame.Surface] = None
         self.heart_icon: Optional[pygame.Surface] = None
         
+        # Menu assets
+        self.menu_assets: Dict[str, pygame.Surface] = {}
+        
     def load_all_assets(self, game_surface_height: int):
         """Load all game assets."""
         self.load_tiles()
@@ -32,6 +35,7 @@ class AssetLoader:
         self.load_campfire_frames()
         self.load_background_layers(game_surface_height)
         self.load_ui_assets()
+        self.load_menu_assets()
     
     def load_tiles(self):
         """Load tile images."""
@@ -82,6 +86,20 @@ class AssetLoader:
     def load_ui_assets(self):
         """Load UI assets like heart icon."""
         self.heart_icon = assets.create_heart_surface()
+    
+    def load_menu_assets(self):
+        """Load main menu assets (background and buttons)."""
+        try:
+            menu_path = os.path.join(self.assets_path, 'menu')
+            
+            self.menu_assets = {
+                'background': pygame.image.load(os.path.join(menu_path, 'background.jpg')).convert(),
+                'btn_lanjutkan': pygame.image.load(os.path.join(menu_path, 'btn_lanjutkan.png')).convert_alpha(),
+                'btn_mulai_baru': pygame.image.load(os.path.join(menu_path, 'btn_mulai_baru.png')).convert_alpha(),
+                'btn_keluar': pygame.image.load(os.path.join(menu_path, 'btn_keluar.png')).convert_alpha(),
+            }
+        except pygame.error as e:
+            raise AssetLoadError("Menu assets", e)
     
     def load_music(self, music_file: str):
         """Load and play background music."""
