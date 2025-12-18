@@ -1,8 +1,8 @@
 import os
 import pygame
-from settings import *
+from utils.settings import *
 from entity.entity import Entity
-from exception import AssetLoadError, SpriteSheetError
+from utils.exception import AssetLoadError, SpriteSheetError
 
 base_path = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.abspath(os.path.join(base_path, '..', '..'))
@@ -18,6 +18,7 @@ class Player(Entity):
         
         self.hearts = PLAYER_START_HEARTS
         self.in_gema_dimension = False
+        self.input_locked = False  # Lock input during NPC dialog
 
         self.attack_state: str | None = None
         self.combo_buffer: bool = False
@@ -136,6 +137,11 @@ class Player(Entity):
 
     def _get_input(self):
         if not self.is_alive: return
+        # Block movement input when locked (during NPC dialog)
+        if self.input_locked:
+            self.velocity.x = 0
+            self.is_walking = False
+            return
         self.is_walking = False
         keys = pygame.key.get_pressed()
         if keys[pygame.K_LEFT] or keys[pygame.K_a]: self.velocity.x = -PLAYER_SPEED; self.direction = -1; self.is_walking = True
@@ -193,6 +199,9 @@ class Player(Entity):
             self.is_alive = False
             self.animation_finished = False
             self.frame_index = 0
+            # Cancel any ongoing attack
+            self.attack_state = None
+            self.combo_buffer = False
             print("Pemain masuk ke state mati.")
 
     def respawn(self, pos):

@@ -1,8 +1,24 @@
 import pygame
-from settings import GRAVITY, ANIMATION_SPEED
+from utils.settings import GRAVITY, ANIMATION_SPEED
+
+# Import new OOP base class (untuk future migration)
+try:
+    from core.entity_base import Entity as EntityBase
+    NEW_ARCHITECTURE_AVAILABLE = True
+except ImportError:
+    NEW_ARCHITECTURE_AVAILABLE = False
 
 
 class Entity:
+    """
+    Legacy Entity class untuk backward compatibility.
+    TODO: Migrate subclasses to use core.entity_base.Entity
+    
+    Prinsip OOP:
+    - Encapsulation: Public interface untuk attributes (akan diganti dengan properties)
+    - Inheritance: Base class untuk Player, Enemy, NPC
+    - Polymorphism: Subclasses override methods seperti draw(), update()
+    """
     def __init__(self, x: int, y: int, image: pygame.Surface):
         self.image = image
         self.rect = self.image.get_rect(bottomleft=(x, y))
