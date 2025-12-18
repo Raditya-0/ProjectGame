@@ -121,8 +121,14 @@ NPC_TYPES_GEMA = {
 }
 
 class NPC(Entity):
+    # Jarak dimana NPC akan tetap menatap player setelah dialog
+    WATCH_DISTANCE = 200
+    # Jarak untuk kembali ke default direction
+    RETURN_TO_DEFAULT_DISTANCE = 250
+    
     def __init__(self, x, y, variant="oldman", dialog_lines=None, patrol=None,
-                 font_path="fonts/freesansbold.ttf", dim='both', auto_snap=True):
+                 font_path="fonts/freesansbold.ttf", dim='both', auto_snap=True,
+                 facing='right'):
         # load frames dulu
         self.variant = variant
         self.idle_frames = load_images_dir(f"{variant}-idle")
@@ -141,11 +147,24 @@ class NPC(Entity):
         self.dim = dim
         self.frame_index = 0.0
         self.anim_speed = 0.08
-        self.auto_snap = auto_snap 
+        self.auto_snap = auto_snap
+        
+        # Direction tracking
+        self.default_direction = -1 if facing == 'left' else 1  # Arah awal/default
+        self.direction = self.default_direction  # Arah saat ini
+        self.has_talked = False  # Flag apakah pernah ngobrol
+        self.is_watching_player = False  # Flag apakah sedang menatap player (freeze animasi)
+        self.watch_session_ended = False  # Flag apakah sesi menatap sudah selesai (player sudah menjauh)
  
+        # Jarak interaksi
+        self.INTERACT_MAX_DIST = 120  # Jarak maksimum untuk bisa ngobrol
+        self.INTERACT_MIN_DIST = 30   # Jarak minimum (tidak boleh terlalu dekat/overlap)
+        
         # interaksi
         self.show_prompt = False
+        self.can_interact = False  # True jika dalam jarak yang tepat (tidak terlalu dekat/jauh)
         self.talking = False
+        self.is_transitioning_to_talk = False  # untuk smooth transition
         # Simpan dialog sebagai tuple (immutable) untuk memastikan urutan tidak berubah
         if dialog_lines is not None:
             self.dialog_lines = tuple(dialog_lines)
@@ -159,6 +178,8 @@ class NPC(Entity):
 
         # patrol opsional
         self.patrol = patrol  # contoh: ((200, 420), 0.8)
+        # penyimpanan patrol saat sedang diajak bicara
+        self._saved_patrol = None
 
         # font UI
         try:
@@ -167,29 +188,106 @@ class NPC(Entity):
             self.font = pygame.font.SysFont(None, 16)
 
     def update(self, player_rect: pygame.Rect):
-        # animasi
-        if len(self.idle_frames) > 1:
-            self.frame_index = (self.frame_index + self.anim_speed) % len(self.idle_frames)
-            self.image = self.idle_frames[int(self.frame_index)]
-
-        # patrol sederhana
-        if self.patrol:
-            (x1, x2), speed = self.patrol
-            self.rect.x += speed
-            if self.rect.x < min(x1, x2) or self.rect.x > max(x1, x2):
-                self.patrol = ((x1, x2), -speed)
-
-        # deteksi jarak ke player
+        # Hitung jarak ke player dulu (dibutuhkan untuk beberapa kondisi)
         dist_x = abs(self.rect.centerx - player_rect.centerx)
         dist_y = abs(self.rect.centery - player_rect.centery)
-        self.show_prompt = (dist_x < 120 and dist_y < 120)
+        total_dist = (dist_x ** 2 + dist_y ** 2) ** 0.5
+        
+        # Update watching state - HANYA jika sudah pernah ngobrol DAN sesi watch belum selesai
+        if self.has_talked and not self.talking and not self.watch_session_ended:
+            if total_dist < self.WATCH_DISTANCE:
+                self.is_watching_player = True
+            else:
+                # Player sudah menjauh, sesi watch selesai PERMANEN
+                self.is_watching_player = False
+                self.watch_session_ended = True  # Tidak akan menatap lagi
+        else:
+            # Belum pernah ngobrol, sedang ngobrol, atau sesi watch sudah selesai
+            if not self.talking:
+                self.is_watching_player = False
+        
+        # Smooth transition: jika sedang transisi, lanjutkan animasi sampai kembali ke frame 0
+        if self.is_transitioning_to_talk:
+            if len(self.idle_frames) > 1:
+                self.frame_index = (self.frame_index + self.anim_speed) % len(self.idle_frames)
+                self.image = self.idle_frames[int(self.frame_index)]
+                
+                # Cek apakah sudah kembali ke frame 0 atau sangat dekat
+                if int(self.frame_index) == 0 and self.frame_index < self.anim_speed * 1.5:
+                    # Selesai transisi, freeze di frame 0
+                    self.is_transitioning_to_talk = False
+                    self.frame_index = 0.0
+                    self.image = self.idle_frames[0]
+            else:
+                # Tidak ada animasi, langsung selesai transisi
+                self.is_transitioning_to_talk = False
+                
+        # Jika sedang berbicara atau menatap player, tetap diam di frame pertama
+        elif self.talking or self.is_watching_player:
+            # pastikan image dihentikan di frame pertama
+            if len(self.idle_frames) > 0:
+                self.frame_index = 0.0
+                self.image = self.idle_frames[0]
+            # jangan lanjutkan patrol/anim
+        else:
+            # animasi normal
+            if len(self.idle_frames) > 1:
+                self.frame_index = (self.frame_index + self.anim_speed) % len(self.idle_frames)
+                self.image = self.idle_frames[int(self.frame_index)]
 
-    def handle_event(self, event: pygame.event.Event):
-        if event.type == pygame.KEYDOWN and event.key == TALK_KEY and self.show_prompt:
+            # patrol sederhana (hanya jalankan jika tidak sedang berbicara)
+            if self.patrol:
+                (x1, x2), speed = self.patrol
+                self.rect.x += speed
+                if self.rect.x < min(x1, x2) or self.rect.x > max(x1, x2):
+                    self.patrol = ((x1, x2), -speed)
+
+        # deteksi jarak untuk prompt
+        # Player harus dalam jarak yang tepat: tidak terlalu jauh DAN tidak terlalu dekat
+        in_max_range = (dist_x < self.INTERACT_MAX_DIST and dist_y < self.INTERACT_MAX_DIST)
+        too_close = (dist_x < self.INTERACT_MIN_DIST and dist_y < self.INTERACT_MAX_DIST)  # Terlalu dekat secara horizontal
+        
+        self.can_interact = in_max_range and not too_close
+        self.show_prompt = self.can_interact
+        
+        # Update direction: ikuti arah player HANYA jika sedang watching
+        if self.is_watching_player:
+            # Sedang menatap player
+            if player_rect.centerx < self.rect.centerx:
+                self.direction = -1  # Hadap kiri
+            else:
+                self.direction = 1   # Hadap kanan
+        elif self.has_talked and self.watch_session_ended:
+            # Sesi watch sudah selesai, tetap di arah default
+            self.direction = self.default_direction
+
+    def handle_event(self, event: pygame.event.Event, player_rect: pygame.Rect = None, player=None):
+        # player_rect: optional, used to make NPC face the player when conversation starts
+        # player: optional, player object to make player face the NPC
+        if event.type == pygame.KEYDOWN and event.key == TALK_KEY and self.can_interact:
             if not self.talking:
                 # Mulai percakapan dari awal (index 0)
                 self.talking = True
+                self.is_transitioning_to_talk = True  # aktifkan smooth transition
                 self.dialog_index = 0
+                # Reset watch session untuk sesi baru setelah ngobrol
+                self.watch_session_ended = False
+                # simpan state patrol dan hentikan NPC supaya tetap diam saat bicara
+                self._saved_patrol = self.patrol
+                self.patrol = None
+                # JANGAN langsung set ke frame 0, biar transisi selesaikan animasi dulu
+                # Make NPC face the player
+                if player_rect is not None:
+                    if player_rect.centerx < self.rect.centerx:
+                        self.direction = -1
+                    else:
+                        self.direction = 1
+                # Make player face the NPC
+                if player is not None:
+                    if self.rect.centerx < player_rect.centerx:
+                        player.direction = -1  # NPC di kiri, player hadap kiri
+                    else:
+                        player.direction = 1   # NPC di kanan, player hadap kanan
             else:
                 # Lanjut ke dialog berikutnya
                 self.dialog_index += 1
@@ -197,11 +295,20 @@ class NPC(Entity):
                 if self.dialog_index >= len(self.dialog_lines):
                     # Selesai, tutup dialog dan reset ke 0
                     self.talking = False
+                    self.has_talked = True  # Flag bahwa pernah ngobrol
                     self.dialog_index = 0
+                    # restore patrol state jika ada
+                    if getattr(self, '_saved_patrol', None) is not None:
+                        self.patrol = self._saved_patrol
+                        self._saved_patrol = None
 
     def draw(self, screen, camera_offset_x=0, camera_offset_y=0):
-        # gambar sprite npc
-        screen.blit(self.image, (self.rect.x - camera_offset_x, self.rect.y - camera_offset_y))
+        # gambar sprite npc (gunakan Entity.draw agar respect pada self.direction)
+        try:
+            super().draw(screen, camera_offset_x, camera_offset_y)
+        except Exception:
+            # fallback: langsung gambar tanpa flip jika ada masalah
+            screen.blit(self.image, (self.rect.x - camera_offset_x, self.rect.y - camera_offset_y))
         # UI (prompt/dialog)
         if self.talking:
             self._draw_dialog_box(screen, camera_offset_x, camera_offset_y)
@@ -213,7 +320,7 @@ class NPC(Entity):
         w, h = text.get_size()
         pad = 6
         x = self.rect.centerx - w // 2 - camera_offset_x
-        y = self.rect.y - 36 - camera_offset_y
+        y = self.rect.y - 25 - camera_offset_y  # Diturunkan dari -36 ke -25
         pygame.draw.rect(screen, (0, 0, 0), (x - pad, y - pad, w + 2*pad, h + 2*pad), border_radius=8)
         screen.blit(text, (x, y))
 
@@ -236,7 +343,7 @@ class NPC(Entity):
         
         pad = 10
         x = self.rect.centerx - max_w // 2 - camera_offset_x
-        y = self.rect.y - 80 - camera_offset_y
+        y = self.rect.y - 25 - total_h - camera_offset_y  # Diturunkan dan konsisten dengan prompt
         
         # Draw background box
         pygame.draw.rect(screen, (20, 20, 20), (x - pad, y - pad, max_w + 2*pad, total_h + 2*pad), border_radius=10)
@@ -270,15 +377,15 @@ class NPC(Entity):
                 
             for spawn_info in spawn_list:
                 spawn_rect = spawn_info['rect']
-                facing = spawn_info['facing']
+                facing = spawn_info.get('facing', 'right')
                 
                 npc = NPC(
                     spawn_rect.x,
                     spawn_rect.y,
                     variant=config['variant'],
-                    dim=config['dim']
+                    dim=config['dim'],
+                    facing=facing
                 )
-                npc.direction = -1 if facing == 'left' else 1
                 npcs.append(npc)
         
         # Process gema map spawns
@@ -289,15 +396,15 @@ class NPC(Entity):
                 
             for spawn_info in spawn_list:
                 spawn_rect = spawn_info['rect']
-                facing = spawn_info['facing']
+                facing = spawn_info.get('facing', 'right')
                 
                 npc = NPC(
                     spawn_rect.x,
                     spawn_rect.y,
                     variant=config['variant'],
-                    dim=config['dim']
+                    dim=config['dim'],
+                    facing=facing
                 )
-                npc.direction = -1 if facing == 'left' else 1
                 npcs.append(npc)
         
         return npcs
